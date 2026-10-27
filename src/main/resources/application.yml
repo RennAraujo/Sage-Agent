@@ -4,6 +4,14 @@ spring:
   threads:
     virtual:
       enabled: true
+  ai:
+    model:
+      # Liga o ChatModel do Bedrock Converse (Spring AI). Com "none" o Sage sobe sem modelo e /api/perguntas dá 503.
+      chat: ${SAGE_CHAT_MODEL:bedrock-converse}
+    bedrock:
+      aws:
+        # Credenciais vêm da cadeia padrão da AWS (variáveis de ambiente, perfil, role da instância).
+        region: ${AWS_REGION:us-east-1}
   # Limites e limiar de memória do multipart não ficam aqui: o UploadConfig os deriva de sage.upload.max-zip-bytes.
 
 management:
@@ -56,3 +64,18 @@ sage:
     # Limiar de relevância sem o reranker (o score vira cobertura lexical, que perde para pergunta pt sobre doc en).
     # 0.0 = qualquer candidato passa. Consumido pelo roteamento da pergunta.
     min-score-without-reranker: 0.0
+    # Score mínimo do melhor trecho (nota do reranker) para a pergunta ir ao modelo. Abaixo disso, resposta fixa
+    # "Não encontrei isso na documentação disponível." sem gastar token. Calibrado na Task 20.
+    min-score: 0.35
+  models:
+    # Model ids (ou inference profiles) do Bedrock. Sem padrão: sem eles /api/perguntas responde 503.
+    fast-id: ${SAGE_MODEL_FAST_ID:}
+    strong-id: ${SAGE_MODEL_STRONG_ID:}
+    max-tokens: 1500
+    temperature: 0
+    # Prazo total de uma resposta do modelo (do pedido ao último token, não por token).
+    timeout: 50s
+  questions:
+    # Orçamento de análise, busca e auditoria antes do modelo. O SSE fica aberto por isto mais sage.models.timeout.
+    preparation-timeout: 10s
+    index-retry-after: 5s

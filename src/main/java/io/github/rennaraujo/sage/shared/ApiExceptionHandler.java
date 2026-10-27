@@ -44,6 +44,18 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.TOO_MANY_REQUESTS, Long.toString(seconds));
     }
 
+    @ExceptionHandler(ServiceUnavailableException.class)
+    ResponseEntity<ProblemDetail> unavailable(ServiceUnavailableException e) {
+        ProblemDetail body = Problems.of(HttpStatus.SERVICE_UNAVAILABLE);
+        body.setDetail(e.getMessage());
+        ResponseEntity.BodyBuilder builder =
+                ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).contentType(MediaType.APPLICATION_PROBLEM_JSON);
+        e.retryAfter()
+                .ifPresent(d -> builder.header(
+                        HttpHeaders.RETRY_AFTER, Long.toString(Math.max(MIN_RETRY_AFTER_SECONDS, ceilSeconds(d)))));
+        return builder.body(body);
+    }
+
     /** Lançadas de dentro de um controller (segurança por método); no filtro quem responde são os handlers do auth. */
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ProblemDetail> accessDenied() {

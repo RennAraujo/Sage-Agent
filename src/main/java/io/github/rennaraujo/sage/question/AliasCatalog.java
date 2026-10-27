@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -110,6 +111,7 @@ public class AliasCatalog {
 
     private final DocumentStore store;
     private final List<PublicLanguage> publicLanguages;
+    private final Map<String, String> displayNames;
     private final AtomicLong generation = new AtomicLong();
     private final Clock clock;
     private final Object rebuildLock = new Object();
@@ -124,7 +126,9 @@ public class AliasCatalog {
     AliasCatalog(DocumentStore store, Clock clock) {
         this.store = store;
         this.clock = clock;
-        this.publicLanguages = loadPublic();
+        Map<String, Map<String, Object>> definitions = loadDefinitions();
+        this.publicLanguages = publicLanguages(definitions);
+        this.displayNames = displayNames(definitions);
     }
 
     @EventListener
@@ -145,6 +149,11 @@ public class AliasCatalog {
 
     List<PublicLanguage> publicLanguages() {
         return publicLanguages;
+    }
+
+    /** Nome legível da linguagem pública ("Java", "Spring Boot"); o próprio id se o YAML não trouxer {@code nome}. */
+    String displayName(String languageId) {
+        return displayNames.getOrDefault(languageId, languageId);
     }
 
     Set<String> internalAliases() {
@@ -232,7 +241,7 @@ public class AliasCatalog {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<PublicLanguage> loadPublic() {
+    private static Map<String, Map<String, Object>> loadDefinitions() {
         LoaderOptions options = new LoaderOptions();
         options.setAllowDuplicateKeys(false);
         Object root;
@@ -241,8 +250,11 @@ public class AliasCatalog {
         } catch (IOException e) {
             throw new IllegalStateException("Não foi possível ler " + RESOURCE, e);
         }
-        Map<String, Map<String, Object>> languages =
-                (Map<String, Map<String, Object>>) ((Map<String, Object>) root).get("languages");
+        return (Map<String, Map<String, Object>>) ((Map<String, Object>) root).get("languages");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<PublicLanguage> publicLanguages(Map<String, Map<String, Object>> languages) {
         List<PublicLanguage> result = new ArrayList<>();
         languages.forEach((id, def) -> {
             List<Pattern> names = ((List<String>) def.get("names"))
@@ -251,5 +263,15 @@ public class AliasCatalog {
             result.add(new PublicLanguage(id, names, version));
         });
         return List.copyOf(result);
+    }
+
+    private static Map<String, String> displayNames(Map<String, Map<String, Object>> languages) {
+        Map<String, String> names = new HashMap<>();
+        languages.forEach((id, def) -> {
+            if (def.get("nome") instanceof String name && !name.isBlank()) {
+                names.put(id, name);
+            }
+        });
+        return Map.copyOf(names);
     }
 }

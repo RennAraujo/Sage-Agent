@@ -40,6 +40,16 @@ final class ApiKeyAuthenticationFilter extends OncePerRequestFilter {
                 .toList();
     }
 
+    /**
+     * O despacho ASYNC que conclui um SSE ({@code /api/perguntas}) passa de novo pela autorização. Sem sessão, o
+     * contexto de segurança do REQUEST original não chega até ele, então a chave é conferida outra vez (o cabeçalho
+     * continua na requisição) e as regras normais valem também ali.
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {

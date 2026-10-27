@@ -23,7 +23,7 @@ class RetrieverTest {
     /** O limiar de rota da Task 11 (sage.retrieval.min-score). */
     private static final double MIN_SCORE = 0.35;
 
-    private final RetrievalProperties properties = new RetrievalProperties(1500, CANDIDATES, CONTEXT, 0.0);
+    private final RetrievalProperties properties = new RetrievalProperties(1500, CANDIDATES, CONTEXT, MIN_SCORE, 0.0);
     private LuceneSearchIndex index;
 
     @BeforeEach

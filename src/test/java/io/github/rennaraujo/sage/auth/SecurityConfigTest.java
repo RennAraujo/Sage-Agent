@@ -228,6 +228,7 @@ class SecurityConfigTest {
         HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/perguntas"))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + key)
                 .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .header(TestOnlyController.HEADER, "1")
                 .POST(HttpRequest.BodyPublishers.ofString("{}"))
                 .build();
         return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
@@ -244,6 +245,7 @@ class SecurityConfigTest {
     private static HttpHeaders headers(String authorization) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set(TestOnlyController.HEADER, "1");
         if (authorization != null) {
             headers.set(HttpHeaders.AUTHORIZATION, authorization);
         }

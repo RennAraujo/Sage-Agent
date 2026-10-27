@@ -34,6 +34,7 @@
         <lucene.version>10.5.2</lucene.version>
         <onnxruntime.version>1.31.1</onnxruntime.version>
         <djl.tokenizers.version>0.39.0</djl.tokenizers.version>
+        <spring-ai.version>2.0.2</spring-ai.version>
     </properties>
 
     <dependencyManagement>
@@ -42,6 +43,13 @@
                 <groupId>software.amazon.awssdk</groupId>
                 <artifactId>bom</artifactId>
                 <version>${awssdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -56,6 +64,10 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-bedrock-converse</artifactId>
         </dependency>
         <dependency>
             <groupId>org.yaml</groupId>

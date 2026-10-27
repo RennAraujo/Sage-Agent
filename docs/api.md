@@ -1,6 +1,6 @@
 # API
 
-Este documento descreve o contrato HTTP do Sage. Por enquanto existem a autenticação e os endpoints de documentos; os de perguntas e lacunas entram nas próximas tarefas e ganham seção aqui quando chegarem.
+Este documento descreve o contrato HTTP do Sage: autenticação, perguntas e documentos. Os endpoints de lacunas e importação entram nas próximas tarefas e ganham seção aqui quando chegarem.
 
 ## Autenticação e papéis
 
@@ -66,7 +66,7 @@ O limite vale por instância da aplicação, porque os baldes ficam em memória.
 
 ### Formato dos erros
 
-Todo erro da API é `application/problem+json` (RFC 9457) com `type`, `title` e `status`. Sem detalhe da exceção, sem nome de classe, sem stack trace e sem trecho de documento. A exceção são os erros de documento (415, 413, 422 e 404 do upload), que acrescentam um `detail` com uma frase fixa em português ("Campo obrigatório ausente no frontmatter: secao"); essas frases citam o nome do campo e nunca o valor enviado. O `type` é um URN estável (`urn:sage:problem:unauthorized`, `forbidden`, `rate-limited`, `bad-request`, `not-found`, `internal-error`...) que o cliente pode comparar; o `title` é o texto para mostrar a uma pessoa. O 401 inclui `WWW-Authenticate: Bearer realm="sage"`.
+Todo erro da API é `application/problem+json` (RFC 9457) com `type`, `title` e `status`. Sem detalhe da exceção, sem nome de classe, sem stack trace e sem trecho de documento. A exceção são os erros de documento (415, 413, 422 e 404 do upload), que acrescentam um `detail` com uma frase fixa em português ("Campo obrigatório ausente no frontmatter: secao"); essas frases citam o nome do campo e nunca o valor enviado. O `type` é um URN estável (`urn:sage:problem:unauthorized`, `forbidden`, `rate-limited`, `bad-request`, `not-found`, `unavailable`, `internal-error`...) que o cliente pode comparar; o `title` é o texto para mostrar a uma pessoa. O 401 inclui `WWW-Authenticate: Bearer realm="sage"`.
 
 ```
 HTTP/1.1 401
@@ -77,6 +77,94 @@ Content-Type: application/problem+json
 ```
 
 Os mesmos cabeçalhos de segurança acompanham todas as respostas; estão descritos em [seguranca.md](seguranca.md).
+
+## Perguntas
+
+### POST /api/perguntas
+
+Papel `READER` ou `EDITOR`. O corpo é JSON:
+
+```json
+{ "pergunta": "como usar toList no java 21?", "conversaId": "3f2a9c1e-7d4b-4e8a-9f10-2b6c5d8e1a47" }
+```
+
+`pergunta` é obrigatória, não pode ser só espaço e tem no máximo 2000 caracteres. O teto existe por dois motivos: limita o custo do reranker e do tokenizer (que são lineares no tamanho da entrada) e mantém as regex do analisador longe de entradas patológicas. `conversaId` é opcional; se vier, precisa casar `[A-Za-z0-9-]{1,64}`, porque vai para a auditoria. Sem ele o Sage gera um UUID e o devolve no `metadata`. Por enquanto o id só identifica a conversa; o contexto da pergunta anterior ainda não é reaproveitado.
+
+A resposta é `text/event-stream`. Cada evento tem um nome e um corpo JSON numa linha `data:`. São quatro tipos:
+
+| Evento | Quando | Corpo |
+| --- | --- | --- |
+| `metadata` | Uma vez, antes de qualquer texto. | Rota, modelo, score do melhor trecho, citações, versão usada, se há fonte não revisada, tempos até ali. |
+| `text` | Zero ou mais vezes. | `{"texto": "..."}`: uma frase já validada, um bloco de código inteiro, ou um texto fixo emitido pelo código (aviso de versão, "Documentação consultada: ...", "Não encontrei..."). |
+| `done` | Uma vez, no fim. | O mesmo formato do `metadata`, com `frasesDescartadas` e `temposMs` finais. |
+| `error` | Se algo falhar depois que o stream começou. | `{"mensagem": "Não foi possível concluir a resposta. Tente de novo."}`, sempre a mesma frase. |
+
+Cada `text` é uma unidade completa. A interface pode concatenar com espaço (ou quebra de linha, para bloco de código) sem se preocupar com frase cortada no meio, porque o servidor só solta uma frase depois que ela terminou e passou pela validação de citação descrita em [seguranca.md](seguranca.md#contra-delírio). O preço é que a primeira frase aparece inteira de uma vez, não letra por letra.
+
+Exemplo de uma resposta (quebrado em linhas para leitura; cada `data:` vem numa linha só):
+
+```
+curl -N -X POST http://localhost:8080/api/perguntas \
+  -H "Authorization: Bearer $SAGE_KEY" -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"pergunta":"como usar toList no java?"}'
+```
+
+```
+event:metadata
+data:{"conversaId":"b1c0e5d2-6a43-4f7e-9d2a-0c5e8f1b3a77","rota":"FAST_MODEL","modelo":"FAST",
+      "scoreMaximo":0.92,
+      "citacoes":[{"n":1,"documento":"publico/java/25/stream-api.md","secao":"Stream > Terminal operations",
+                   "revisado":true,"linguagem":"java","versao":"25"},
+                  {"n":2,"documento":"publico/java/25/colecoes.md","secao":"List","revisado":false,
+                   "linguagem":"java","versao":"25"}],
+      "versaoUsada":"25","fontesNaoRevisadas":true,"frasesDescartadas":0,"temposMs":{"analise":0,"busca":41}}
+
+event:text
+data:{"texto":"Considerei a versão 25, a mais recente disponível."}
+
+event:text
+data:{"texto":"Documentação consultada: Java 25"}
+
+event:text
+data:{"texto":"Stream.toList() devolve uma lista não modificável com os elementos do stream [1]."}
+
+event:text
+data:{"texto":"```java\nList<String> nomes = pessoas.stream().map(Pessoa::nome).toList();\n```"}
+
+event:done
+data:{"conversaId":"b1c0e5d2-6a43-4f7e-9d2a-0c5e8f1b3a77","rota":"FAST_MODEL","modelo":"FAST",...,
+      "frasesDescartadas":1,"temposMs":{"analise":0,"busca":41,"modelo":1830,"total":1872}}
+```
+
+O que cada campo quer dizer:
+
+- `rota`: `FAST_MODEL` (respondeu com o modelo rápido) ou `NOT_DOCUMENTED` (respondeu com texto fixo, sem chamar modelo). Os outros valores do enum (`CACHE`, `STRONG_MODEL`, `FLOW`, `WEB_FALLBACK`) ainda não são emitidos.
+- `modelo`: `FAST` ou `STRONG`; ausente quando nenhum modelo foi chamado.
+- `scoreMaximo`: score do melhor trecho, de 0 a 1. Com o reranker ligado é a nota dele; sem reranker é a cobertura lexical, outra escala (ver [fluxo-de-uma-pergunta.md](fluxo-de-uma-pergunta.md)).
+- `citacoes`: os trechos enviados ao modelo, na ordem em que o texto os cita (`[1]`, `[2]`...). `versao` só aparece em documento público versionado; em documento interno, `linguagem` é o nome da aplicação. Com isso a interface mostra "[1] Java 25 · Stream > Terminal operations".
+- `versaoUsada`: a versão pública que filtrou a busca, quando foi uma só.
+- `fontesNaoRevisadas`: algum trecho enviado vem de documento que ninguém marcou como revisado.
+- `frasesDescartadas`: quantas frases (e blocos de código) o guard barrou por falta de citação válida.
+- `temposMs`: milissegundos por etapa (`analise`, `busca`, `modelo`, `total`).
+
+Quando a rota é `NOT_DOCUMENTED`, o `metadata` vem com `citacoes` vazio e os `text` são textos fixos: "Não encontrei isso na documentação disponível." (nenhum trecho passou do limiar) ou "Não tenho a documentação do Java 8 no acervo." (a pergunta é só sobre documentação pública e pediu uma versão que não está indexada). Numa pergunta mista (pública e interna) que pede uma versão pública ausente, o aviso "Não tenho a documentação do Java 8 no acervo." sai logo depois do `metadata` e a resposta continua só com a documentação interna.
+
+Respostas de erro, todas `application/problem+json` e antes de o stream abrir:
+
+| Status | Quando |
+| --- | --- |
+| 400 | Corpo não é JSON, `pergunta` vazia ou com mais de 2000 caracteres, `conversaId` fora do formato. A resposta não repete a pergunta. |
+| 401, 403 | Sem chave ou chave inválida. |
+| 429 | Mais de `sage.rate-limit.questions-per-minute` perguntas por minuto na mesma chave. |
+| 503 + `Retry-After: 5` | O índice ainda está carregando o acervo (logo depois de subir). `detail`: "O índice ainda está carregando; tente de novo em alguns segundos." |
+| 503 | Modelo não configurado: faltam `SAGE_MODEL_FAST_ID`/`SAGE_MODEL_STRONG_ID` ou o Bedrock está desligado (`SAGE_CHAT_MODEL=none`). `detail`: "modelo não configurado". |
+
+A ordem das verificações é índice, modelo e limite: um 503 não gasta a cota da chave.
+
+Cada pergunta gera dois eventos na auditoria cifrada. `QUESTION_ASKED` é gravado antes de qualquer evento SSE, com o id da conversa, a rota e os ids dos documentos enviados ao modelo; se essa gravação falhar, o cliente recebe só um `error` e nada da resposta é transmitido. `QUESTION_ANSWERED` é gravado no fim com o desfecho (`completed`, `interrupted` ou `failed`), os ids dos documentos efetivamente citados até ali e o número de frases descartadas; numa resposta completa ele é gravado antes do `done`, e se falhar o cliente recebe `error` no lugar do `done`. Nenhum dos dois leva o texto da pergunta ou da resposta.
+
+Toda resposta termina com `done` ou com `error`. O modelo tem um prazo total, `sage.models.timeout` (50 s), contado do pedido ao último token: um modelo que manda um pedaço a cada segundo também é cortado. Se ele falhar ou estourar o prazo depois que o stream começou, o cliente recebe um `error` e o stream fecha; as frases já enviadas continuam válidas. O SSE fica aberto por `sage.questions.preparation-timeout` (10 s, o orçamento de análise, busca e auditoria) mais o prazo do modelo, então o `error` do serviço chega antes de o stream expirar sozinho. Se o cliente fechar a conexão, o Sage cancela a chamada ao modelo na hora, para o Bedrock parar de gerar (e de cobrar) tokens que ninguém vai ler.
 
 ## Documentos
 

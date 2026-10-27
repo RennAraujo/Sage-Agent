@@ -1,18 +1,23 @@
 # Linguagens e frameworks públicos que o Sage reconhece na pergunta.
+# nome: como a linguagem aparece para o usuário ("Documentação consultada: Java 21").
 # names: como o usuário costuma escrever (sem acento, minúsculo; o casamento ignora caixa e acento).
 # version-pattern: regex com um grupo de captura para o número da versão. Roda sobre a pergunta já normalizada
 # (minúsculas, sem acento), então não use letras acentuadas nela.
 languages:
   java:
+    nome: Java
     names: [java, jdk]
     # "j" curto só colado ao número (j21, j-21); "java 1.8" vira versão 8.
     version-pattern: '\b(?:(?:java|jdk)\s*-?|j-?)(?:1\.)?(\d{1,2})\b'
   spring-boot:
+    nome: Spring Boot
     names: [spring boot, spring-boot, springboot]
     version-pattern: '\bspring\s*boot\s*(\d+\.\d+)'
   spring-framework:
+    nome: Spring Framework
     names: [spring framework, spring-framework, spring mvc, spring core]
     version-pattern: '\bspring\s*framework\s*(\d+\.\d+)'
   spring-security:
+    nome: Spring Security
     names: [spring security, spring-security]
     version-pattern: '\bspring\s*security\s*(\d+\.\d+)'

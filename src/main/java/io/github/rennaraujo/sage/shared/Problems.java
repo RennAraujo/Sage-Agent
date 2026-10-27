@@ -39,6 +39,7 @@ public final class Problems {
             case UNPROCESSABLE_CONTENT -> "unprocessable-content";
             case CONFLICT -> "conflict";
             case TOO_MANY_REQUESTS -> "rate-limited";
+            case SERVICE_UNAVAILABLE -> "unavailable";
             default -> status.is5xxServerError() ? "internal-error" : "error";
         };
     }
@@ -59,6 +60,7 @@ public final class Problems {
             case UNPROCESSABLE_CONTENT -> "Conteúdo não processável";
             case CONFLICT -> "Conflito";
             case TOO_MANY_REQUESTS -> "Muitas requisições";
+            case SERVICE_UNAVAILABLE -> "Serviço indisponível";
             default -> status.is5xxServerError() ? "Erro interno" : "Erro";
         };
     }

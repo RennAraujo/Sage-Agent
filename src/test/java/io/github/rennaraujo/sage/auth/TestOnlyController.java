@@ -17,13 +17,19 @@ import org.springframework.web.bind.annotation.ResponseBody;
 @ResponseBody
 class TestOnlyController {
 
+    static final String HEADER = "X-Sage-Teste-Seguranca";
+
     private final RateLimiter rateLimiter;
 
     TestOnlyController(RateLimiter rateLimiter) {
         this.rateLimiter = rateLimiter;
     }
 
-    @PostMapping("/api/perguntas")
+    /**
+     * Substitui o controller real de perguntas nos testes de segurança: o cabeçalho {@link #HEADER} torna este
+     * mapeamento mais específico, e o teste exercita só o filtro e o limite, sem índice nem modelo.
+     */
+    @PostMapping(path = "/api/perguntas", headers = HEADER + "=1")
     Map<String, String> ask(Principal principal) {
         rateLimiter.require(principal.getName(), RateLimitedAction.QUESTION);
         return Map.of("ok", "true", "quem", principal.getName());
