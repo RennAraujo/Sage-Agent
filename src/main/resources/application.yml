@@ -47,3 +47,7 @@ sage:
     max-zip-bytes: 50MB
     max-zip-entries: 500
     max-zip-uncompressed-bytes: 200MB
+  retrieval:
+    # Teto de caracteres por trecho do índice (bloco de código único pode passar) e candidatos pedidos à busca.
+    max-chunk-chars: 1500
+    candidates: 30

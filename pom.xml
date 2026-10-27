@@ -31,6 +31,7 @@
         <tika.version>3.3.3</tika.version>
         <flexmark.version>0.64.8</flexmark.version>
         <jsoup.version>1.22.2</jsoup.version>
+        <lucene.version>10.5.2</lucene.version>
     </properties>
 
     <dependencyManagement>
@@ -99,6 +100,16 @@
             <groupId>org.jsoup</groupId>
             <artifactId>jsoup</artifactId>
             <version>${jsoup.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+            <version>${lucene.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-common</artifactId>
+            <version>${lucene.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

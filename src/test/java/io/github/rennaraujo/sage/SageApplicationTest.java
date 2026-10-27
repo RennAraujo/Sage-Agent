@@ -1,12 +1,15 @@
 package io.github.rennaraujo.sage;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
+import io.github.rennaraujo.sage.search.IndexReadiness;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
+import java.time.Duration;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,6 +26,7 @@ import org.springframework.test.context.DynamicPropertySource;
 class SageApplicationTest {
 
     private static final int MASTER_KEY_BYTES = 32;
+    private static final long READY_TIMEOUT_SECONDS = 30;
 
     /** Chave mestra descartável, gerada a cada execução num arquivo temporário. Nunca é commitada. */
     @DynamicPropertySource
@@ -45,8 +49,14 @@ class SageApplicationTest {
         registry.add("sage.storage.local-dir", storageDir::toString);
     }
 
+    /**
+     * O indicador "index" deixa o agregado de saúde DOWN (503) enquanto o índice carrega, de propósito: o serviço só
+     * se anuncia saudável quando consegue buscar. Por isso o teste espera a carga (acervo vazio, milissegundos).
+     */
     @Test
-    void healthIsUp(@Autowired TestRestTemplate rest) {
+    void healthIsUp(@Autowired TestRestTemplate rest, @Autowired IndexReadiness readiness) {
+        await().atMost(Duration.ofSeconds(READY_TIMEOUT_SECONDS)).until(readiness::isReady);
+
         assertThat(rest.getForEntity("/actuator/health", String.class).getStatusCode())
                 .isEqualTo(HttpStatus.OK);
     }
