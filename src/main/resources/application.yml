@@ -30,3 +30,12 @@ sage:
     type: local
     local-dir: data
     s3-bucket: ${SAGE_S3_BUCKET:}
+  auth:
+    # Chaves de API: lista de { name, role (READER|EDITOR), sha256 }. Só o hash fica aqui; gere com scripts/new-api-key.
+    # Exemplo via ambiente: SAGE_AUTH_KEYS_0_NAME=ana SAGE_AUTH_KEYS_0_ROLE=EDITOR SAGE_AUTH_KEYS_0_SHA256=<hash>
+    # Sem nenhuma chave configurada, todos os endpoints de /api respondem 401.
+    keys: []
+  rate-limit:
+    # Por chave de API, janela de 1 minuto.
+    questions-per-minute: 20
+    uploads-per-minute: 10

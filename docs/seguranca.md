@@ -41,3 +41,37 @@ Limitação conhecida: o blob não é amarrado à chave de armazenamento onde fo
 ### Cuidados no código
 
 Exceções e logs não carregam chave nem texto em claro. `DataKey` e `EncryptedBlob` sobrescrevem `toString` para não vazar nada se alguém logar o objeto sem querer. Os testes cobrem ida e volta, adulteração, prefixo desconhecido, blob truncado, chave mestra com tamanho errado e o zeramento da chave de dados; o teste de integração `KmsKeyProviderIT` usa LocalStack e roda no `mvnw verify` pelo maven-failsafe-plugin; sem Docker ele é pulado (`disabledWithoutDocker`) e o build continua verde, então o caminho do KMS só fica sob teste automático onde há Docker.
+
+## Autenticação, rate limit e auditoria
+
+### Chaves de API
+
+O acesso à API é por chave no cabeçalho `Authorization: Bearer`, com dois papéis (`READER` e `EDITOR`); o contrato está em [api.md](api.md). Aqui ficam as decisões de segurança por trás dele.
+
+A configuração guarda só o SHA-256 de cada chave, nunca a chave. Quem lê o `application.yml`, um dump de variáveis de ambiente ou um backup da configuração não consegue se autenticar com o que encontrar. Um hash simples (sem sal e sem função lenta como bcrypt) é aceitável aqui porque a chave não é uma senha escolhida por gente: são 40 caracteres base62 sorteados por um gerador criptográfico, cerca de 238 bits, e ninguém consegue montar um dicionário nem uma tabela arco-íris disso. Uma função lenta só encareceria cada requisição sem ganho real.
+
+Na requisição, o filtro calcula o SHA-256 do token recebido e o compara com o hash de cada chave configurada usando `MessageDigest.isEqual`, que leva o mesmo tempo independentemente de onde os bytes divergem. A lista inteira é percorrida mesmo depois de um acerto, para o tempo de resposta não indicar qual chave casou. Tokens com mais de 256 caracteres são recusados antes de qualquer hash.
+
+A API não tem sessão, cookie nem usuário padrão: o Spring Security roda em modo stateless, login por formulário e Basic estão desligados e há um `AuthenticationManager` que recusa tudo, só para o Spring Boot não gerar o usuário `user` com senha aleatória. Como o navegador não anexa a chave sozinho (ela vai num cabeçalho que o JavaScript do chat precisa preencher), CSRF não se aplica a `/api/**` e fica desligado ali. Tudo o que não for `/api/**` nem um dos dois caminhos públicos (`/actuator/health`, `/chat/**`) é negado por padrão.
+
+Os limites desse esquema, escritos abertamente: a chave não expira sozinha, não existe revogação individual sem reiniciar a aplicação, e uma chave vazada vale até alguém notar. Para rotacionar, gere uma nova, troque o hash na configuração e reinicie. Também não há proteção contra força bruta além do tamanho da chave e do limite de requisições; 238 bits tornam isso irrelevante na prática, mas tentativas com chave inválida não são limitadas nem registradas hoje.
+
+### Cabeçalhos de segurança
+
+Todas as respostas levam `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` e `Strict-Transport-Security` (um ano, com subdomínios; o Spring só o emite em requisições HTTPS, então atrás de um proxy que termina o TLS é preciso repassar `X-Forwarded-Proto`). A política de CSP não permite scripts nem estilos inline: a página do chat precisa servir seu JavaScript e seu CSS como arquivos próprios. Isso é uma restrição de propósito, porque é o que impede que um texto de documento exibido na página execute código.
+
+### Rate limit
+
+O limite é por chave e por ação (pergunta e upload), com Bucket4j em memória e balde recarregado a cada minuto: 20 perguntas e 10 uploads por minuto por padrão, ajustáveis em `sage.rate-limit.*`. Pergunta custa uma chamada ao modelo no Bedrock e upload custa embedding e cifragem, então é onde um cliente com defeito (ou uma chave vazada) mais gasta dinheiro. Estourou, a resposta é 429 com `Retry-After`.
+
+Por ser em memória, o estado se perde ao reiniciar e não é compartilhado entre instâncias; com N instâncias o limite efetivo é N vezes o configurado. Para um limite global seria preciso um backend compartilhado (Redis, por exemplo), que o projeto ainda não tem.
+
+### Auditoria
+
+Cada evento relevante (pergunta feita, documento enviado, apagado ou revisado, importação iniciada) vira um blob cifrado em `audit/<yyyy-MM-dd>/<uuid>`, usando o mesmo `EnvelopeCipher` e o mesmo `BlobStorage` do acervo. O tipo do evento, o nome da chave que o causou, o instante e os detalhes ficam todos dentro do payload cifrado; a chave do blob tem só a data (UTC) e um UUID aleatório. Dá para listar quantos eventos houve em cada dia sem decifrar nada, mas não quem os causou nem o que eram. Um blob por evento evita o ciclo ler-alterar-gravar de um arquivo de log único, que perderia registros sob concorrência; o custo é muitos objetos pequenos, que uma rotina de compactação futura pode juntar.
+
+Os detalhes de um evento levam ids, hashes e tamanhos, nunca texto de pergunta, resposta ou documento. `AuditEvent.toString()` mostra só o tipo e o instante, para que um log descuidado não vaze o ator.
+
+Se a gravação falhar, `EncryptedAuditLog` lança `AuditException`, com mensagem fixa e sem a exceção original como causa, e o log registra apenas o tipo do evento e a classe da falha. A decisão é falhar fechado: quem chama deve abortar a operação auditada em vez de seguir sem rastro. O preço é que uma indisponibilidade do storage também derruba perguntas e uploads, o que num ambiente que exige trilha de auditoria completa é o comportamento certo, e num que não exige pode ser relaxado capturando a exceção no ponto de uso.
+
+Ainda não existe ferramenta para ler a auditoria. Hoje a leitura é manual: listar `audit/<dia>/`, decifrar cada blob com o `EnvelopeCipher` e interpretar o JSON.
