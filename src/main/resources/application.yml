@@ -18,3 +18,10 @@ server:
 logging:
   pattern:
     console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+
+sage:
+  crypto:
+    # local: chave mestra em arquivo (desenvolvimento). kms: AWS KMS (produção), região e credenciais do ambiente AWS.
+    provider: local
+    local-key-file: secrets/local-master.key
+    kms-key-id: ${SAGE_KMS_KEY_ID:}
