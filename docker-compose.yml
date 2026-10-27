@@ -5,6 +5,10 @@ services:
     ports:
       - "8080:8080"
     read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     tmpfs:
       - /tmp
     volumes:
@@ -20,3 +24,4 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 40s

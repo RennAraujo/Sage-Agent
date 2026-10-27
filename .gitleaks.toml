@@ -1,0 +1,10 @@
+title = "Sage-Agent gitleaks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "sage-api-key"
+description = "Chave de API do Sage-Agent"
+regex = '''sage_[A-Za-z0-9]{40,}'''
+keywords = ["sage_"]

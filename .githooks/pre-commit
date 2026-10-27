@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Bloqueia o commit se o gitleaks achar segredo no que está em stage.
+# Ativar: git config core.hooksPath .githooks
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --redact --config .gitleaks.toml; then
+    echo "pre-commit: gitleaks encontrou segredo no stage, commit bloqueado." >&2
+    exit 1
+  fi
+else
+  echo "pre-commit: aviso, gitleaks não instalado, varredura local ignorada (o CI ainda roda)." >&2
+fi

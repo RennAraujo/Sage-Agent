@@ -23,3 +23,13 @@ docker build -t sage-agent .
 ```
 
 O `docker-compose.yml` lê um arquivo `.env` (copie o `.env.example`) e monta `./data` em `/app/data`.
+
+## Desenvolvimento
+
+O repositório traz um hook de pre-commit que roda o gitleaks nos arquivos em stage e bloqueia o commit se achar segredo. Para ativar:
+
+```
+git config core.hooksPath .githooks
+```
+
+O hook usa o binário `gitleaks` local; se ele não estiver instalado, só avisa e deixa o commit passar. A varredura de histórico completo roda de qualquer forma no CI (`.github/workflows/ci.yml`), junto com o build e o Trivy. A regra extra `sage-api-key` fica em `.gitleaks.toml`.

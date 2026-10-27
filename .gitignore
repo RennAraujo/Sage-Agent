@@ -8,11 +8,13 @@ target/
 secrets/
 *.key
 *.pem
-data/
+*.p12
+*.jks
+/data/
 models/*
 !models/.gitkeep
 *.log
-logs/
+/logs/
 .obsidian/
 .planning/
 .superpowers/
