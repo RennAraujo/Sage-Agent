@@ -45,7 +45,7 @@ class LuceneSearchIndexTest {
 
     @BeforeEach
     void setUp() {
-        index = new LuceneSearchIndex(new RetrievalProperties(1500, 30), new IndexReadiness());
+        index = new LuceneSearchIndex(new RetrievalProperties(1500, 20, 5, 0.0), new IndexReadiness());
     }
 
     @AfterEach
@@ -178,7 +178,8 @@ class LuceneSearchIndexTest {
     }
 
     private static LuceneSearchIndex hybridIndex(EmbeddingModel model) {
-        return new LuceneSearchIndex(new RetrievalProperties(1500, 30), new IndexReadiness(), Optional.of(model));
+        return new LuceneSearchIndex(
+                new RetrievalProperties(1500, 20, 5, 0.0), new IndexReadiness(), Optional.of(model));
     }
 
     @Test

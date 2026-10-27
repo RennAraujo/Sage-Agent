@@ -48,6 +48,11 @@ sage:
     max-zip-entries: 500
     max-zip-uncompressed-bytes: 200MB
   retrieval:
-    # Teto de caracteres por trecho do índice (bloco de código único pode passar) e candidatos pedidos à busca.
+    # Teto de caracteres por trecho do índice (bloco de código único pode passar) e candidatos pedidos à busca (20: o custo do reranker é linear no número de pares).
     max-chunk-chars: 1500
-    candidates: 30
+    candidates: 20
+    # Quantos trechos, depois do reranker, vão para o contexto do modelo de linguagem.
+    context-chunks: 5
+    # Limiar de relevância sem o reranker (o score vira cobertura lexical, que perde para pergunta pt sobre doc en).
+    # 0.0 = qualquer candidato passa. Consumido pelo roteamento da pergunta.
+    min-score-without-reranker: 0.0

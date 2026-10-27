@@ -74,7 +74,7 @@ Cada trecho ganha um `KnnFloatVectorField` com similaridade de cosseno, indexado
 
 ### Como a busca funde
 
-Dado um texto de consulta e um `SearchFilter`, o índice faz duas consultas: BM25 pedindo os `candidates` melhores trechos (30 por padrão, ou o `limit` se for maior) e KNN pedindo outros `candidates`. As duas respeitam o mesmo filtro. No KNN o filtro entra na própria consulta (`KnnFloatVectorQuery` com filtro), e não depois, porque filtrar o resultado de um top 30 poderia deixar zero trechos da versão pedida mesmo existindo vários. A regra do filtro é a de sempre: linguagem e versão restringem só o conteúdo público, o interno passa por estar em `sources`.
+Dado um texto de consulta e um `SearchFilter`, o índice faz duas consultas: BM25 pedindo os `candidates` melhores trechos (20 por padrão, ou o `limit` se for maior) e KNN pedindo outros `candidates`. As duas respeitam o mesmo filtro. No KNN o filtro entra na própria consulta (`KnnFloatVectorQuery` com filtro), e não depois, porque filtrar o resultado de um top 20 poderia deixar zero trechos da versão pedida mesmo existindo vários. A regra do filtro é a de sempre: linguagem e versão restringem só o conteúdo público, o interno passa por estar em `sources`.
 
 As duas listas são fundidas por Reciprocal Rank Fusion (`HybridRanker`): cada lista dá a cada trecho a nota `1 / (60 + posição)` e as notas se somam. Só a posição entra na conta, então não é preciso comparar o score do BM25 com o cosseno, que estão em escalas sem relação. Um trecho que aparece nas duas listas sobe, e em empate vale a ordem em que apareceu (BM25 antes). O 60 é o valor do artigo que propôs o método; não foi ajustado para este acervo.
 
@@ -99,3 +99,45 @@ Em memória, cada vetor custa 384 × 4 bytes = 1,5 KB, mais o grafo HNSW (algo c
 - O modelo é pequeno. A similaridade entre línguas funciona para perguntas diretas de programação, mas ele confunde conceitos parecidos com mais facilidade que os modelos maiores; o reranker previsto no desenho existe para corrigir isso.
 - O limiar de relevância é decidido mais adiante (a decisão de caminho ainda é uma tarefa futura). O RRF devolve sempre os melhores trechos, mesmo que nenhum seja bom: a posição não diz se o resultado serve.
 - Trocar de modelo exige reindexar tudo, e vetores de modelos diferentes não se misturam. Como o índice é reconstruído a cada subida, isso é só trocar os arquivos.
+
+## Reranker e o score que decide o caminho
+
+A busca híbrida entrega 20 candidatos em ordem de RRF, e a posição nessa lista não diz se o melhor deles responde à pergunta: o RRF devolve os "menos ruins" mesmo quando todos são. Quem decide se a pergunta tem resposta no acervo (e, portanto, se segue para o modelo de linguagem com contexto ou cai no caminho de lacuna) precisa de um número que signifique "este trecho responde isto". É para isso que existe o reranker.
+
+### O modelo
+
+`cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`, exportação ONNX fp32 do próprio repositório, revisão fixada no `models.lock`. Um cross-encoder lê pergunta e trecho juntos, na mesma sequência, e devolve um logit; é mais preciso que comparar dois vetores calculados separadamente, ao custo de rodar o modelo uma vez por par. Por isso ele só vê os candidatos que a busca já separou, nunca o acervo inteiro. O mMiniLM foi treinado no mMARCO, a versão multilíngue (inclui português) do MS MARCO, então aceita pergunta em português contra trecho em inglês sem tradução. A justificativa da escolha e das alternativas está em [decisoes.md](decisoes.md#reranker-multilíngue-em-onnx).
+
+`OnnxReranker` segue o mesmo molde do `OnnxEmbeddingModel`: sessão ONNX e tokenizer criados uma vez, compartilhados entre threads, fechados no desligamento; o construtor fecha o que já abriu se falhar no meio (e pontua um par de teste, para um modelo errado falhar na subida); usar depois de `close()` lança `IllegalStateException`. Os arquivos se chamam `reranker.onnx` e `reranker-tokenizer.json`, para conviverem com os de embeddings em `sage.models.dir`. Como no caso dos embeddings, se os arquivos existem mas a sessão não carrega, a aplicação não sobe; só a ausência deles degrada.
+
+### Como o score é calculado
+
+Cada candidato vira o par (pergunta, `headingPath + "\n" + text`), o mesmo texto que foi vetorizado. Os pares entram num lote só, com padding até o maior par. O score é `sigmoid(logit)`, então fica em [0, 1]. Não é uma probabilidade calibrada: o modelo foi treinado para ordenar, não para que 0,7 signifique "70% de chance de responder". Passa de 0,5 quando o logit é positivo, e o limiar de rota (`sage.retrieval.min-score`, 0,35) deve ser tratado como parâmetro a ajustar com perguntas reais do acervo, não como verdade. O `Retriever` pede `candidates` (20) ao índice, reordena pelo score e devolve os `context-chunks` (5) melhores, do maior para o menor; o primeiro deles é o `topScore` em que o roteamento da pergunta se apoia.
+
+Cada par é truncado em `sage.rerank.max-tokens` (padrão 256; o modelo aceita até 512). No tokenizer o corte é só do lado do trecho (`truncate second only`), e a pergunta é cortada antes, em no máximo metade do orçamento (128 tokens com o padrão), para um texto de pergunta enorme não deixar o trecho sem espaço (nesse caso o tokenizer lança "Truncation error", e a chamada falharia). A medida é feita por um segundo tokenizer, sem truncamento. Os `token_type_ids` vêm do próprio encoder, não são zeros.
+
+### Latência e o preço dos 256 tokens
+
+O custo do modelo é proporcional ao total de tokens do lote; neste hardware (Ryzen 7 5700X, 8 núcleos, ONNX Runtime fp32 na CPU) rende uns 5 mil tokens por segundo. Medido depois de uma chamada de aquecimento:
+
+| lote | tempo |
+| --- | --- |
+| 30 pares, trechos de ~260 caracteres (~80 tokens por par) | ~260 ms |
+| 20 pares, trechos no teto de 1500 caracteres, `max-tokens` 256 | 780 a 1030 ms |
+| 30 pares, trechos de ~1300 caracteres, sem corte (512), medido antes de adotar o 256 | ~2000 ms |
+
+A faixa de 780 a 1030 ms é a variação entre rodar o teste sozinho e rodá-lo junto dos outros testes da classe. O teste `twentyCeilingSizedPairsWithinBudget` usa 1500 ms como guarda de regressão; a meta de 800 ms não foi atingida de forma estável nesta máquina com esses parâmetros, e isso é uma limitação conhecida. Em produção o que importa é a CPU do contêiner, que pode ser mais lenta que a de desenvolvimento.
+
+O que o 256 custa em qualidade: um trecho de 1500 caracteres tem uns 330 tokens, então o reranker vê só os primeiros ~230 tokens do trecho (o resto do orçamento é a pergunta e o título da seção). Se a parte que responde está no fim de um trecho grande, o score cai e o trecho pode ficar de fora dos 5 do contexto, mesmo que o modelo de linguagem recebesse o trecho inteiro depois. Trechos curtos, que são a maioria no Markdown de documentação dividido por título, não são afetados. Subir `max-tokens` para 512 devolve a qualidade nos trechos grandes e custa o dobro no pior caso. Também foram experimentados a versão quantizada em int8 e a otimizada (`model_O3`) do mesmo repositório, e mais threads: o int8 ganhou uns 10% (a CPU não tem VNNI) e o O3 20 a 30%, o que não justificou trocar o artefato oficial. Nenhuma das configurações foi validada com perguntas reais do acervo.
+
+### Memória do contêiner
+
+Com os dois modelos carregados, os pesos fp32 ocupam uns 0,95 GB (2 × 470 MB) fora da heap, mais as áreas de trabalho do ONNX Runtime e os tokenizers. Num teste com só o reranker, o processo chegou a 1,3 GB de memória residente (medida grosseira, com a JVM de teste); somando o segundo modelo e a heap do índice, a estimativa é de uns 2,3 GB para um acervo pequeno. O mínimo razoável para o contêiner é 3 GB, e mais se o índice crescer (veja a estimativa de RAM do índice acima). Com menos que isso o kernel mata o processo por falta de memória durante o primeiro lote de reranking, não na subida.
+
+### Sem o modelo: o score de fallback
+
+Se `reranker.onnx` ou `reranker-tokenizer.json` não estão em `sage.models.dir`, a aplicação sobe, o log traz um WARN (sem conteúdo) e o `Retriever` mantém a ordem da busca híbrida. O que muda é o que o número significa. Devolver um valor fixo, ou derivado só da posição, faria toda pergunta passar ou toda pergunta falhar no limiar. Em vez disso o fallback usa a cobertura lexical: a fração dos termos da pergunta (sem acento, minúsculos, com pelo menos 3 letras e sem uma lista curta de palavras vazias em português e inglês) que aparece, como palavra inteira, no `headingPath` ou no texto do trecho. Para a lista continuar em ordem decrescente, o score de cada trecho é limitado pelo do anterior.
+
+O problema é que a documentação é em inglês e as perguntas em português: a cobertura lexical de uma pergunta em português sobre um trecho em inglês fica perto de 0, e com o limiar normal (0,35) quase tudo cairia no caminho "não documentado". Por isso o score do fallback não deve ser comparado com `min-score`. `Retriever.rerankerActive()` diz qual score está valendo, e o roteamento (a decisão de caminho, ainda por implementar) usa, sem reranker, um limiar separado: `sage.retrieval.min-score-without-reranker`. A propriedade já existe em `RetrievalProperties`; o padrão é `0.0`, que significa "qualquer candidato passa", ou seja, sem reranker o sistema deixa de decidir por relevância e responde sempre que a busca devolver algo, deixando o filtro de citação e o guard fazerem o resto. Quem tem um acervo no mesmo idioma das perguntas pode subir esse valor (a cobertura lexical funciona nesse caso).
+
+As limitações são as de uma busca lexical: flexões diferentes ("ordenar" e "ordenação") não casam, e um termo comum a todo o acervo ("java") infla a cobertura. O fallback serve para o sistema degradar sem quebrar, não para substituir o reranker em produção.

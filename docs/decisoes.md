@@ -30,3 +30,18 @@ Registro das escolhas que mais pesaram no desenho, com o contexto em que foram f
 **Escolha.** `intfloat/multilingual-e5-small`, na exportação ONNX fp32 que o próprio repositório publica, com a revisão fixada no `models.lock` e o sha256 conferido no download e no build da imagem. Foi o menor que cobre português e inglês com qualidade aceitável em perguntas de programação, e roda na CPU de um contêiner pequeno. A fusão com o BM25 é por Reciprocal Rank Fusion, que só usa posições e dispensa calibrar duas escalas de score diferentes.
 
 **Consequência.** O modelo pesa 470 MB e fica fora do git; quem clona precisa rodar o script de download, e sem ele a aplicação sobe só com BM25 (com um aviso no log), o que mantém os testes e o desenvolvimento simples. Gerar vetores é lento perto do BM25: cerca de 60 ms por trecho, o que alonga o upload e a carga inicial (detalhes e números em [arquitetura.md](arquitetura.md#busca-híbrida)). A qualidade do modelo pequeno é o teto desta etapa; o reranker do desenho existe para compensar. Se um dia o modelo mudar, os vetores antigos deixam de servir, mas como o índice é refeito a cada subida a troca é só de arquivos.
+
+## Reranker multilíngue em ONNX
+
+**Contexto.** A busca híbrida ordena os candidatos, mas a posição não diz se o melhor deles responde à pergunta, e a decisão de seguir com contexto ou registrar uma lacuna precisa de um score com esse significado. O reranker precisa ser multilíngue (pergunta em português, documentação em inglês), rodar na CPU e não mandar texto de documento para fora.
+
+**Opções.**
+
+- `BAAI/bge-reranker-v2-m3`: qualidade melhor, mas é um XLM-R grande (cerca de 570 M de parâmetros) e o repositório oficial não publica ONNX. Pontuar 30 pares na CPU levaria vários segundos, mesmo com trechos curtos (estimativa pelo tamanho, não medida).
+- `jinaai/jina-reranker-v2-base-multilingual`: tem ONNX, mas é um modelo base (cerca de 280 M de parâmetros) e a licença é não comercial (CC-BY-NC), ruim para um projeto que alguém pode querer usar numa empresa.
+- Reranker por LLM (Bedrock): contraria o requisito de não enviar o acervo para fora e acrescenta uma chamada por pergunta.
+- `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`: 12 camadas, 384 de largura, treinado no mMARCO (inclui português), licença Apache 2.0, e o repositório oficial já traz a exportação ONNX junto do `tokenizer.json`.
+
+**Escolha.** O mMiniLM cross-encoder, no ONNX fp32 oficial, com a revisão `1427fd65` fixada no `models.lock` e sha256 conferido no download e no build da imagem (`reranker.onnx`, 470 MB, e `reranker-tokenizer.json`, 17 MB). É o único dos candidatos que junta multilíngue, ONNX pronto, licença permissiva e tamanho compatível com a CPU.
+
+**Consequência.** Com trechos curtos, 30 pares levam cerca de 260 ms; com os 20 candidatos padrão no teto de 1500 caracteres e pares cortados em 256 tokens (`sage.rerank.max-tokens`), 0,8 a 1 s, sem o corte cerca de 2 s (números, o preço do corte em qualidade e alternativas testadas em [arquitetura.md](arquitetura.md#reranker-e-o-score-que-decide-o-caminho)). A imagem Docker cresce 490 MB. O score é `sigmoid(logit)` e não é calibrado, então o limiar `min-score` de 0,35 é um ponto de partida a validar com perguntas reais. Sem os arquivos do modelo a aplicação continua subindo, com um score de fallback lexical que mantém a ordem da busca híbrida e está documentado como substituto, não equivalente.

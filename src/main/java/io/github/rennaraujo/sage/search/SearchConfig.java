@@ -3,6 +3,8 @@ package io.github.rennaraujo.sage.search;
 import io.github.rennaraujo.sage.document.DocumentStore;
 import io.github.rennaraujo.sage.search.embedding.EmbeddingConfig;
 import io.github.rennaraujo.sage.search.embedding.EmbeddingModel;
+import io.github.rennaraujo.sage.search.rerank.RerankConfig;
+import io.github.rennaraujo.sage.search.rerank.Reranker;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +16,7 @@ import org.springframework.context.annotation.Import;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(RetrievalProperties.class)
-@Import(EmbeddingConfig.class)
+@Import({EmbeddingConfig.class, RerankConfig.class})
 class SearchConfig {
 
     private static final Logger LOG = LoggerFactory.getLogger(SearchConfig.class);
@@ -36,6 +38,21 @@ class SearchConfig {
             LOG.info("Busca híbrida ligada: {} dimensões", model.get().dimensions());
         }
         return new LuceneSearchIndex(properties, readiness, model);
+    }
+
+    @Bean
+    Retriever retriever(SearchIndex index, ObjectProvider<Reranker> rerankers, RetrievalProperties properties) {
+        Optional<Reranker> reranker = Optional.ofNullable(rerankers.getIfAvailable());
+        if (reranker.isEmpty()) {
+            LOG.warn("Modelo de reranking ausente (sage.models.dir): o score passa a ser a cobertura lexical dos "
+                    + "termos da pergunta, não uma nota do reranker. Rode scripts/download-models para baixá-lo.");
+        } else {
+            LOG.info(
+                    "Reranker ligado: {} candidatos, {} no contexto",
+                    properties.candidates(),
+                    properties.contextChunks());
+        }
+        return new Retriever(index, reranker, properties);
     }
 
     @Bean

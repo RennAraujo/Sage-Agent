@@ -19,8 +19,8 @@ RUN set -eu; \
     cp native/lib/$djl/cpu/libtokenizers.so /native/; \
     chmod 755 /native && chmod 644 /native/*
 
-# Modelo de embeddings: baixado de uma revisão fixa e conferido contra o sha256 de models.lock. Se o hash divergir,
-# o build falha aqui. Fica em estágio próprio para o cache do Docker não rebaixar 470 MB a cada mudança no código.
+# Modelos (embeddings e reranker): baixados de uma revisão fixa e conferidos contra o sha256 de models.lock. Se o hash divergir,
+# o build falha aqui. Fica em estágio próprio para o cache do Docker não rebaixar 960 MB a cada mudança no código.
 FROM maven:3.9-eclipse-temurin-25 AS models
 WORKDIR /models-build
 COPY models.lock ./

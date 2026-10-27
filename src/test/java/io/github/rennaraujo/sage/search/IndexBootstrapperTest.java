@@ -33,7 +33,7 @@ class IndexBootstrapperTest {
     @BeforeEach
     void setUp() {
         readiness = new IndexReadiness();
-        index = new LuceneSearchIndex(new RetrievalProperties(1500, 30), readiness);
+        index = new LuceneSearchIndex(new RetrievalProperties(1500, 20, 5, 0.0), readiness);
     }
 
     @AfterEach

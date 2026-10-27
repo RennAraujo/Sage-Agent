@@ -133,8 +133,8 @@ class OnnxEmbeddingModelTest {
 
     @Test
     void indexFindsPortugueseQueryInEnglishChunkWithRealModel() {
-        try (LuceneSearchIndex index =
-                new LuceneSearchIndex(new RetrievalProperties(1500, 30), new IndexReadiness(), Optional.of(model))) {
+        try (LuceneSearchIndex index = new LuceneSearchIndex(
+                new RetrievalProperties(1500, 20, 5, 0.0), new IndexReadiness(), Optional.of(model))) {
             index.upsert(doc("publico/java/25/sort.md", "# Sorting\nHow to sort a List in Java with Comparator.\n"));
             index.upsert(doc("publico/java/25/tls.md", "# TLS\nConfigure TLS in Spring Boot with an SSL bundle.\n"));
 
