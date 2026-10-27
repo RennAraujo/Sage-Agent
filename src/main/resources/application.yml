@@ -25,3 +25,8 @@ sage:
     provider: local
     local-key-file: secrets/local-master.key
     kms-key-id: ${SAGE_KMS_KEY_ID:}
+  storage:
+    # local: blobs cifrados em arquivos sob local-dir. s3: bucket em s3-bucket (região e credenciais do ambiente AWS).
+    type: local
+    local-dir: data
+    s3-bucket: ${SAGE_S3_BUCKET:}

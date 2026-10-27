@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Base64;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
@@ -33,6 +34,15 @@ class SageApplicationTest {
         Files.writeString(file, Base64.getEncoder().encodeToString(key));
         registry.add("sage.crypto.provider", () -> "local");
         registry.add("sage.crypto.local-key-file", file::toString);
+    }
+
+    @TempDir
+    static Path storageDir;
+
+    @DynamicPropertySource
+    static void localStorage(DynamicPropertyRegistry registry) {
+        registry.add("sage.storage.type", () -> "local");
+        registry.add("sage.storage.local-dir", storageDir::toString);
     }
 
     @Test
