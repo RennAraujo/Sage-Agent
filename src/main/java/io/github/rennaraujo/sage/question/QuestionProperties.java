@@ -13,5 +13,5 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("sage.questions")
 public record QuestionProperties(
-        @DefaultValue("10s") Duration preparationTimeout,
+        @DefaultValue("20s") Duration preparationTimeout,
         @DefaultValue("5s") Duration indexRetryAfter) {}

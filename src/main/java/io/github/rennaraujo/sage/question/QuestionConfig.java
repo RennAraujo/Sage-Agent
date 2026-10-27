@@ -9,6 +9,7 @@ import io.github.rennaraujo.sage.question.llm.PromptBuilder;
 import io.github.rennaraujo.sage.search.RetrievalProperties;
 import io.github.rennaraujo.sage.search.Retriever;
 import io.github.rennaraujo.sage.search.SearchIndex;
+import io.github.rennaraujo.sage.web.WebFallback;
 import java.time.Clock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -63,7 +64,8 @@ class QuestionConfig {
             ModelProperties models,
             AnswerCache cache,
             ConversationStore conversations,
-            GapRegistry gaps) {
+            GapRegistry gaps,
+            WebFallback web) {
         return new AnswerService(
                 analyzer,
                 catalog,
@@ -78,6 +80,7 @@ class QuestionConfig {
                 cache,
                 conversations,
                 gaps,
-                Clock.systemUTC());
+                Clock.systemUTC(),
+                web);
     }
 }

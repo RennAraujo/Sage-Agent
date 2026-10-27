@@ -58,6 +58,12 @@ public class AliasCatalog {
             + "horas?|dias?|semanas?|meses|anos?|exemplos?|linhas?|classes?|metodos?|arquivos?|threads?|usuarios?|"
             + "pessoas?|registros?|bytes?|requisicoes|erros?|testes?|campos?|etapas?|fases?)\\b");
 
+    private static final Pattern BOUNDARY = Pattern.compile(
+            "(?<=\\p{Ll})(?=\\p{Lu})|(?<=\\p{Lu})(?=\\p{Lu}\\p{Ll})|(?<=\\p{L})(?=\\p{N})|(?<=\\p{N})(?=\\p{L})");
+    private static final Pattern NON_ALNUM = Pattern.compile("[^a-z0-9]+");
+    /** Abaixo disso a busca por trecho dentro de palavras geraria falso positivo demais; vale só a palavra inteira. */
+    private static final int MIN_COMPACT_ALIAS = 4;
+
     private static final String BEFORE = "(?<![\\p{L}\\p{N}])";
     private static final String AFTER_LETTERS = "(?!\\p{L})";
     private static final String AFTER_ANY = "(?![\\p{L}\\p{N}])";
@@ -109,9 +115,9 @@ public class AliasCatalog {
     }
 
     /** Fotografia do lado interno, marcada com a geração do acervo em que a leitura começou. */
-    private record Internal(long generation, Set<String> aliases, List<Pattern> patterns) {}
+    private record Internal(long generation, Set<String> aliases, List<Pattern> patterns, Set<String> compact) {}
 
-    private static final Internal EMPTY = new Internal(-1, Set.of(), List.of());
+    private static final Internal EMPTY = new Internal(-1, Set.of(), List.of(), Set.of());
 
     private final DocumentStore store;
     private final List<PublicLanguage> publicLanguages;
@@ -164,6 +170,38 @@ public class AliasCatalog {
 
     Set<String> internalAliases() {
         return snapshot().aliases();
+    }
+
+    /**
+     * Diz se o texto cita algum alias interno, mesmo disfarçado: {@code billing_core_api}, {@code api.billing.core},
+     * {@code BillingCoreApi}. Além do casamento por palavra inteira, compara o texto sem separadores (e sem caixa nem
+     * acento) com cada alias também sem separadores, o que pega alias dentro de tokens compostos. Existe para quem
+     * manda texto para fora (busca web) conferir que nada interno vai junto.
+     */
+    public boolean containsInternalAlias(String text) {
+        String normalized = normalize(text);
+        Internal current = snapshot();
+        String split = normalize(splitBoundaries(text));
+        if (current.patterns().stream()
+                .anyMatch(p -> p.matcher(normalized).find() || p.matcher(split).find())) {
+            return true;
+        }
+        String compactText = compact(normalized);
+        return current.compact().stream().anyMatch(compactText::contains);
+    }
+
+    /** {@code ErpClient} vira {@code Erp Client}; {@code sga2} vira {@code sga 2}. Roda antes de minúsculas. */
+    static String splitBoundaries(String text) {
+        return BOUNDARY.matcher(text).replaceAll(" ");
+    }
+
+    private static String compact(String text) {
+        return NON_ALNUM.matcher(normalize(text)).replaceAll("");
+    }
+
+    /** Casa os aliases no texto como veio e também separado em camelCase e letra/dígito ({@code ErpClient}). */
+    boolean mentionsInternal(String text) {
+        return matchesInternal(normalize(text)) || matchesInternal(normalize(splitBoundaries(text)));
     }
 
     boolean matchesInternal(String normalized) {
@@ -225,7 +263,11 @@ public class AliasCatalog {
         }
         List<Pattern> patterns =
                 aliases.stream().map(a -> namePattern(a, AFTER_ANY)).toList();
-        return new Internal(startedAt, Set.copyOf(aliases), patterns);
+        Set<String> compact = aliases.stream()
+                .map(AliasCatalog::compact)
+                .filter(c -> c.length() >= MIN_COMPACT_ALIAS)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+        return new Internal(startedAt, Set.copyOf(aliases), patterns, compact);
     }
 
     private static void addAlias(Set<String> aliases, String raw) {

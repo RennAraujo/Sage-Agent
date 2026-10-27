@@ -1,8 +1,7 @@
 package io.github.rennaraujo.sage.upload;
 
-import com.vladsch.flexmark.html2md.converter.FlexmarkHtmlConverter;
-import com.vladsch.flexmark.util.data.MutableDataSet;
 import io.github.rennaraujo.sage.document.InvalidDocumentException;
+import io.github.rennaraujo.sage.shared.HtmlMarkdown;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -45,8 +44,6 @@ import org.apache.tika.parser.pdf.PDFParserConfig;
 import org.apache.tika.parser.txt.CharsetDetector;
 import org.apache.tika.parser.txt.CharsetMatch;
 import org.apache.tika.sax.BodyContentHandler;
-import org.jsoup.Jsoup;
-import org.jsoup.safety.Safelist;
 import org.xml.sax.SAXException;
 
 /**
@@ -111,7 +108,7 @@ public final class DocumentConverter {
     public String toMarkdown(byte[] content, String filename) {
         return switch (classify(content, filename)) {
             case TEXT -> decode(content);
-            case HTML -> htmlToMarkdown(decode(content));
+            case HTML -> HtmlMarkdown.fromHtml(decode(content));
             case PDF -> requireText(extractPdf(content, filename));
             case DOCX -> requireText(extractDocx(content));
             case ZIP, UNSUPPORTED ->
@@ -218,14 +215,6 @@ public final class DocumentConverter {
             return FALLBACK_CHARSET;
         }
         return Charset.forName(match.getName());
-    }
-
-    private static String htmlToMarkdown(String html) {
-        String clean = Jsoup.clean(html, Safelist.relaxed());
-        // Títulos com # (ATX): é o que o chunking por seção procura mais adiante, e o padrão do flexmark seria
-        // sublinhado.
-        MutableDataSet options = new MutableDataSet().set(FlexmarkHtmlConverter.SETEXT_HEADINGS, false);
-        return FlexmarkHtmlConverter.builder(options).build().convert(clean);
     }
 
     private String extractPdf(byte[] content, String filename) {

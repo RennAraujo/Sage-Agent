@@ -26,6 +26,25 @@ class QuestionAnalyzerTest {
     }
 
     @Test
+    void shortInternalAliasInsideCamelCaseOrDigitTokensRoutesAsInternal() {
+        QuestionAnalyzer erp = new QuestionAnalyzer(new AliasCatalog(new FakeCatalogs.Store(
+                FakeCatalogs.internal("erp", List.of("sga")), FakeCatalogs.publicDoc("spring-boot", "3.5"))));
+
+        for (String question : List.of(
+                "como configurar o ErpClient no Spring Boot 3.5",
+                "o erp2 quebrou no Spring Boot 3.5",
+                "ERPService no Spring Boot 3.5",
+                "falha no sga2 com Spring Boot 3.5")) {
+            QuestionAnalysis a = erp.analyze(question, Optional.empty());
+            assertThat(a.sources()).as(question).contains(Source.INTERNAL);
+            assertThat(a.mixed()).as(question).isTrue();
+        }
+        assertThat(erp.analyze("como funciona o interpreter no Spring Boot 3.5", Optional.empty())
+                        .sources())
+                .containsExactly(Source.PUBLIC);
+    }
+
+    @Test
     void javaQuestionIsPublicLookup() {
         QuestionAnalysis a = analyze("No Java 25 como usar Stream.toList?");
         assertThat(a.sources()).containsExactly(Source.PUBLIC);

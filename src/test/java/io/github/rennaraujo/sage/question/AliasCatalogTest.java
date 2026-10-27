@@ -25,7 +25,8 @@ class AliasCatalogTest {
         AliasCatalog catalog = new AliasCatalog(new FakeCatalogs.Store());
         assertThat(catalog.publicLanguages())
                 .extracting(AliasCatalog.PublicLanguage::id)
-                .containsExactlyInAnyOrder("java", "spring-boot", "spring-framework", "spring-security");
+                .containsExactlyInAnyOrder(
+                        "java", "spring-boot", "spring-framework", "spring-security", "rust", "python");
     }
 
     @Test
@@ -33,6 +34,34 @@ class AliasCatalogTest {
         AliasCatalog catalog = new AliasCatalog(new FakeCatalogs.Store(
                 FakeCatalogs.internal("portal-x", List.of("Faturamento X")), FakeCatalogs.publicDoc("java", "25")));
         assertThat(catalog.internalAliases()).containsExactlyInAnyOrder("portal-x", "portal x", "faturamento x");
+    }
+
+    @Test
+    void containsInternalAliasSeesDisguisedAliases() {
+        AliasCatalog catalog = new AliasCatalog(new FakeCatalogs.Store(
+                FakeCatalogs.internal("faturamento-api", List.of("Billing Core")),
+                FakeCatalogs.publicDoc("java", "25")));
+
+        assertThat(catalog.containsInternalAlias("erro no billing_core_api")).isTrue();
+        assertThat(catalog.containsInternalAlias("api.billing.core")).isTrue();
+        assertThat(catalog.containsInternalAlias("BillingCoreApi")).isTrue();
+        assertThat(catalog.containsInternalAlias("o Faturamento_API caiu")).isTrue();
+        assertThat(catalog.containsInternalAlias("BILLING  core")).isTrue();
+        assertThat(catalog.containsInternalAlias("virtual threads no Java 21")).isFalse();
+    }
+
+    @Test
+    void shortAliasesAreFoundAcrossCamelCaseAndDigitBoundaries() {
+        AliasCatalog catalog = new AliasCatalog(new FakeCatalogs.Store(FakeCatalogs.internal("erp", List.of())));
+
+        assertThat(catalog.containsInternalAlias("ErpClient")).isTrue();
+        assertThat(catalog.containsInternalAlias("erp2")).isTrue();
+        assertThat(catalog.containsInternalAlias("ERPService")).isTrue();
+        assertThat(catalog.containsInternalAlias("o erp caiu")).isTrue();
+        assertThat(catalog.containsInternalAlias("interpreter")).isFalse();
+        assertThat(catalog.containsInternalAlias("Perplexity")).isFalse();
+        assertThat(catalog.mentionsInternal("como configurar o ErpClient")).isTrue();
+        assertThat(catalog.mentionsInternal("interpreter")).isFalse();
     }
 
     @Test

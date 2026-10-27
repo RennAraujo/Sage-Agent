@@ -47,7 +47,7 @@ Se a pergunta não cita nada reconhecível, ela herda do turno anterior: "e o to
 
 ## Da busca à resposta: o caminho Haiku
 
-O `AnswerService` orquestra o resto. A pergunta chega pelo `POST /api/perguntas` (contrato em [api.md](api.md)), e o controller só confere três coisas antes de abrir o stream: se o índice terminou de carregar (senão 503 com `Retry-After: 5`), se há modelo configurado (senão 503) e se a chave ainda tem cota no minuto (senão 429). Daí em diante a resposta roda numa virtual thread, com um `SseEmitter` aberto por `sage.questions.preparation-timeout` (10 s) mais o prazo total do modelo (50 s), e cada passo abaixo emite eventos conforme acontece.
+O `AnswerService` orquestra o resto. A pergunta chega pelo `POST /api/perguntas` (contrato em [api.md](api.md)), e o controller só confere três coisas antes de abrir o stream: se o índice terminou de carregar (senão 503 com `Retry-After: 5`), se há modelo configurado (senão 503) e se a chave ainda tem cota no minuto (senão 429). Daí em diante a resposta roda numa virtual thread, com um `SseEmitter` aberto por `sage.questions.preparation-timeout` (20 s) mais o prazo total do modelo (50 s), e cada passo abaixo emite eventos conforme acontece.
 
 ### 1. Versão: qual documentação vai ser usada
 
@@ -57,7 +57,7 @@ Logo depois da análise, o Sage decide a versão. Se a pergunta citou uma ("reco
 Considerei a versão 25, a mais recente disponível.
 ```
 
-Se a pergunta é só sobre documentação pública e pediu uma versão que não está no acervo, o Sage não busca nem chama o modelo. Responde "Não tenho a documentação do Java 8 no acervo." e para. A alternativa, responder com o Java 21 que está lá, parece mais útil mas é exatamente o tipo de erro que o projeto quer evitar: a resposta sairia com cara de certa sobre a versão errada. Numa pergunta mista (pública e interna) o aviso sai do mesmo jeito, logo depois do `metadata`, mas a resposta continua: a busca fica só com as versões públicas que existem e, se nenhuma existe, só com a documentação interna. As versões faltantes são calculadas uma vez e reaproveitadas na busca e na rota. A exceção é a comparação entre versões: "isso existe no java 25 ou é exclusivo do java 8?" com o 8 fora do acervo diz que não tem o 8 e responde sobre o 25 (detalhes em [Comparação entre versões](#comparação-entre-versões)). Só quando nenhuma das versões pedidas existe a pergunta para ali.
+Se a pergunta é só sobre documentação pública e pediu uma versão que não está no acervo, o Sage não chama o modelo (e só busca na web se o fallback estiver configurado; veja [Fallback web](#fallback-web)). Responde "Não tenho a documentação do Java 8 no acervo." e para. A alternativa, responder com o Java 21 que está lá, parece mais útil mas é exatamente o tipo de erro que o projeto quer evitar: a resposta sairia com cara de certa sobre a versão errada. Numa pergunta mista (pública e interna) o aviso sai do mesmo jeito, logo depois do `metadata`, mas a resposta continua: a busca fica só com as versões públicas que existem e, se nenhuma existe, só com a documentação interna. As versões faltantes são calculadas uma vez e reaproveitadas na busca e na rota. A exceção é a comparação entre versões: "isso existe no java 25 ou é exclusivo do java 8?" com o 8 fora do acervo diz que não tem o 8 e responde sobre o 25 (detalhes em [Comparação entre versões](#comparação-entre-versões)). Só quando nenhuma das versões pedidas existe a pergunta para ali.
 
 Comparação não ganha versão inferida. "Em qual versão do java foi introduzido o record?" precisa olhar todas as versões, e filtrar pela mais recente responderia outra pergunta. Pelo mesmo motivo, uma comparação que cita uma versão só ("isso existe no java 25?") busca em todas as versões da linguagem: a resposta pode estar na nota de uma versão anterior.
 
@@ -157,6 +157,23 @@ O log de aplicação tem uma linha por pergunta com rota, modelo, se houve escal
 - O contexto da conversa (cache e continuação) vive na memória de cada instância. Com mais de uma instância atrás de um balanceador sem afinidade de sessão, "e no 17?" pode cair numa instância que não conhece o `conversaId` e ser analisada sozinha.
 - A escalada depende de o Haiku perceber que não dá conta. Se ele achar que dá e escrever uma resposta rasa, ela sai assim; o guard só garante que cada frase cita um trecho.
 - Na comparação por versão, o Sonnet pode errar a ordem ou misturar versões numa frase. A linha "Documentação consultada" e a versão em cada citação deixam isso visível, mas não impedem.
+
+## Fallback web
+
+A mensagem "Não tenho a documentação do Java 21 no acervo." tem uma alternativa quando a pergunta é só pública, a linguagem tem fontes oficiais configuradas (`sage.web.allowlist`) e há chave do Brave (`SAGE_BRAVE_API_KEY`). Nesse caso o `AnswerService` tenta trazer a documentação antes de desistir. Os detalhes de segurança e de configuração estão em [fallback-web.md](fallback-web.md).
+
+O gatilho (rota `WEB_FALLBACK`) é: fontes `{PUBLIC}`, pergunta não mista, linguagem identificada, e a versão pedida ausente do acervo ou o melhor trecho abaixo do limiar ativo. Perguntas internas ou mistas nunca chegam aqui, e uma pergunta com alias interno no texto tem a consulta descartada em vez de enviada. O fluxo, na ordem:
+
+1. Depois da primeira busca e da decisão de rota, `RouteDecider.webFallbackNeeded` diz se vale tentar. Quando a versão falta, busca-se a versão pedida; quando a versão existe mas o trecho não serve, a versão em uso. Sem uma versão certa para rotular o documento (pergunta sem versão e acervo vazio para a linguagem) não se busca nada, porque gravar uma página sob a versão errada seria pior que não ter a página.
+2. `WebFallbackService.fetchAndStore` monta a consulta (sem alias interno), grava `WEB_SEARCH` na auditoria e só então pede ao Brave os resultados restritos aos domínios da linguagem. Descarta URLs cuja estrutura de caminho não traz exatamente a versão pedida (`VersionedUrls`), baixa até 3 páginas pelo fetcher com proteção contra SSRF, converte para Markdown sem texto escondido, descarta página com segredo, audita `DOCUMENT_UPLOADED` com `origem=web` (a chave que perguntou é o ator) e grava com `saveIfAbsent` como `publico/<linguagem>/<versao>/<slug>.md`, `revisado: false`, `url_origem` e `coletado_em`.
+3. Cada gravação publica o evento de documento salvo, e o índice e o catálogo de aliases atualizam na hora. O `AnswerService` refaz análise, busca e decisão e segue o caminho normal, rápido ou forte. A resposta sai com `fontesNaoRevisadas` verdadeiro, as citações marcadas como não revisadas e a linha "Documentação consultada: Java 21" como sempre. Como a gravação limpou o cache durante a pergunta, a época do cache é relida depois do fallback, e a resposta pode ser cacheada.
+4. A segunda pergunta igual encontra a versão no acervo e responde sem tocar na web. Se a web não trouxe nada útil, vale o mesmo texto de antes ("Não tenho a documentação do Java 21 no acervo." ou "Não encontrei isso na documentação disponível."), sem lacuna, porque a pergunta é pública. Uma mesma pergunta (linguagem, versão e texto) só aciona a busca uma vez por hora, ache algo ou não.
+
+Numa comparação entre versões só as versões ausentes são buscadas, dividindo entre elas o teto de 3 páginas por pergunta; depois cada versão é recuperada separadamente, como sempre.
+
+Linguagem pública reconhecida mas sem fontes na allowlist (Rust, Python) e com a versão pedida fora do acervo responde, sem modelo e sem web, "Não tenho a documentação do Rust 1.80 no acervo." seguida de "Não há fontes oficiais configuradas para essa linguagem.". Com a versão no acervo e um trecho fraco, vale o "Não encontrei isso na documentação disponível." de sempre.
+
+O fallback inteiro tem um prazo só, `sage.web.fallback-timeout` (8 s), que cobre todas as versões da pergunta somadas e conta dentro do orçamento de preparação (`sage.questions.preparation-timeout`, 20 s). A aplicação não sobe se o orçamento não passar o prazo do fallback em pelo menos 5 s. Antes de chamar o Brave o serviço grava `WEB_SEARCH` na auditoria; se isso falha, a pergunta falha sem nada sair da máquina.
 
 ## Perguntas de fluxo
 

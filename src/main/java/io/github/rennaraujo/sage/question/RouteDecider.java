@@ -47,6 +47,18 @@ public final class RouteDecider {
         return strong(analysis.type()) ? Route.STRONG_MODEL : Route.FAST_MODEL;
     }
 
+    /**
+     * Rota WEB_FALLBACK: pergunta só pública (nunca mista nem interna), com linguagem identificada, em que a versão
+     * pedida não está no acervo ou o melhor trecho fica abaixo do limiar ativo. Quem chama ainda confere se a
+     * linguagem tem fontes na allowlist e se há buscador configurado.
+     */
+    public boolean webFallbackNeeded(QuestionAnalysis analysis, List<ScoredChunk> chunks, List<String> missing) {
+        return publicOnly(analysis)
+                && !analysis.mixed()
+                && analysis.language().isPresent()
+                && (!missing.isEmpty() || chunks.isEmpty() || topScore(chunks) < threshold);
+    }
+
     /** Comparação e fluxo pedem análise entre trechos e documentos; o modelo forte responde direto. */
     private static boolean strong(QuestionType type) {
         return type == QuestionType.COMPARISON || type == QuestionType.FLOW;

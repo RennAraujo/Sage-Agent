@@ -21,3 +21,13 @@ languages:
     nome: Spring Security
     names: [spring security, spring-security]
     version-pattern: '\bspring\s*security\s*(\d+\.\d+)'
+  # Reconhecidas para a pergunta ser classificada como pública, mas sem fontes na allowlist do fallback web
+  # (sage.web.allowlist): sem a versão no acervo, a resposta é "Não tenho..." seguida de "Não há fontes oficiais...".
+  rust:
+    nome: Rust
+    names: [rust]
+    version-pattern: '\brust\s*-?(\d+\.\d+(?:\.\d+)?)'
+  python:
+    nome: Python
+    names: [python]
+    version-pattern: '\bpython\s*-?(\d+(?:\.\d+)?)'

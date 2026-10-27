@@ -4,6 +4,7 @@ import io.github.rennaraujo.sage.audit.AuditEvent;
 import io.github.rennaraujo.sage.audit.AuditEventType;
 import io.github.rennaraujo.sage.audit.AuditException;
 import io.github.rennaraujo.sage.audit.AuditLog;
+import io.github.rennaraujo.sage.document.Document;
 import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.gap.GapRegistry;
 import io.github.rennaraujo.sage.question.guard.AnswerGuard;
@@ -19,6 +20,7 @@ import io.github.rennaraujo.sage.search.Retriever;
 import io.github.rennaraujo.sage.search.ScoredChunk;
 import io.github.rennaraujo.sage.search.SearchFilter;
 import io.github.rennaraujo.sage.search.SearchIndex;
+import io.github.rennaraujo.sage.web.WebFallback;
 import java.io.UncheckedIOException;
 import java.time.Clock;
 import java.time.Duration;
@@ -76,6 +78,7 @@ public final class AnswerService {
     static final String CONSULTED = "Documentação consultada: %s";
     static final String MISSING_VERSION = "Não tenho a documentação do %s %s no acervo.";
     static final String NOT_MENTIONED = "A documentação do %s disponível não menciona isso.";
+    static final String NO_OFFICIAL_SOURCES = "Não há fontes oficiais configuradas para essa linguagem.";
     static final String NO_VERSION = "(versão não informada)";
     static final String ONLY_COMPARED = "Comparei só as versões %s; peça as demais em outra pergunta.";
 
@@ -98,7 +101,9 @@ public final class AnswerService {
     private final ConversationStore conversations;
     private final GapRegistry gaps;
     private final Clock clock;
+    private final WebFallback web;
 
+    /** Sem fallback web. */
     public AnswerService(
             QuestionAnalyzer analyzer,
             AliasCatalog catalog,
@@ -114,6 +119,40 @@ public final class AnswerService {
             ConversationStore conversations,
             GapRegistry gaps,
             Clock clock) {
+        this(
+                analyzer,
+                catalog,
+                retriever,
+                index,
+                decider,
+                promptBuilder,
+                flowExpander,
+                languageModel,
+                audit,
+                models,
+                cache,
+                conversations,
+                gaps,
+                clock,
+                WebFallback.NONE);
+    }
+
+    public AnswerService(
+            QuestionAnalyzer analyzer,
+            AliasCatalog catalog,
+            Retriever retriever,
+            SearchIndex index,
+            RouteDecider decider,
+            PromptBuilder promptBuilder,
+            FlowContextExpander flowExpander,
+            LanguageModel languageModel,
+            AuditLog audit,
+            ModelProperties models,
+            AnswerCache cache,
+            ConversationStore conversations,
+            GapRegistry gaps,
+            Clock clock,
+            WebFallback web) {
         this.analyzer = analyzer;
         this.catalog = catalog;
         this.retriever = retriever;
@@ -128,6 +167,7 @@ public final class AnswerService {
         this.conversations = conversations;
         this.gaps = gaps;
         this.clock = clock;
+        this.web = web;
     }
 
     /** {@code false} quando não há modelo configurado; o controller responde 503 antes de abrir o stream. */
@@ -146,11 +186,11 @@ public final class AnswerService {
                 request.conversationId().flatMap(id -> conversations.last(id, request.actor()));
         String conversationId = previous.isPresent() ? request.conversationId().get() : conversations.newConversation();
 
-        Plan plan = plan(request.question(), previous);
+        Plan firstPlan = plan(request.question(), previous);
         timer.lap("analise");
         // Só a primeira pergunta de uma conversa usa o cache; uma continuação depende do contexto anterior.
         Optional<CacheKey> key =
-                request.conversationId().isEmpty() ? Optional.of(cacheKey(request, plan)) : Optional.empty();
+                request.conversationId().isEmpty() ? Optional.of(cacheKey(request, firstPlan)) : Optional.empty();
         Optional<CachedAnswer> hit = key.flatMap(cache::get);
         if (hit.isPresent()) {
             replay(
@@ -160,23 +200,28 @@ public final class AnswerService {
                     timer,
                     progress,
                     original,
-                    () -> conversations.append(conversationId, request.actor(), plan.analysis()));
+                    () -> conversations.append(conversationId, request.actor(), firstPlan.analysis()));
             return;
         }
         Recorder recorder = new Recorder(original);
-        AnswerSink sink = key.isPresent() ? recorder : original;
-        Retrieval found = retrieve(request.question(), plan);
+        Resolved resolved = resolve(request, firstPlan, previous, timer, progress);
+        Plan plan = resolved.plan();
+        Retrieval found = resolved.found();
         List<ScoredChunk> chunks = found.chunks();
-        timer.lap("busca");
-        Route route = decider.decide(plan.analysis(), chunks, plan.missing());
+        Route route = resolved.route();
+        if (resolved.fetched()) {
+            // Os documentos novos invalidaram o cache durante esta pergunta; a resposta já nasce com eles no índice.
+            epoch = resolved.cacheEpoch();
+        }
         progress.route(route);
+        AnswerSink sink = key.isPresent() ? recorder : original;
 
         Retrieval context = route == Route.NOT_DOCUMENTED ? found : expandFlow(plan, found);
         recordAsked(request.actor(), conversationId, route, context.chunks());
         Answered answered;
         try {
             answered = route == Route.NOT_DOCUMENTED
-                    ? notDocumented(plan, conversationId, chunks, timer, sink)
+                    ? notDocumented(plan, conversationId, chunks, timer, sink, unsupported(plan))
                     : withModel(request, plan, conversationId, context, route, timer, sink, progress);
         } catch (RuntimeException e) {
             String outcome = interrupted(e, progress) ? "interrupted" : "failed";
@@ -402,6 +447,96 @@ public final class AnswerService {
         }
     }
 
+    /** Plano, trechos e rota depois da busca e, se coube, do fallback web ({@code fetched}: documentos novos). */
+    private record Resolved(Plan plan, Retrieval found, Route route, boolean fetched, long cacheEpoch) {}
+
+    /**
+     * Busca e decide a rota. Numa pergunta só pública, de linguagem com fontes oficiais e com buscador configurado, em
+     * que a versão pedida falta no acervo ou o melhor trecho fica abaixo do limiar (rota WEB_FALLBACK), tenta trazer a
+     * documentação oficial; se algo foi gravado, refaz análise, busca e decisão com o índice atualizado. Se a web não
+     * trouxe nada, segue como se ela não existisse: as mesmas mensagens fixas de antes ("Não tenho a documentação do
+     * Java 8 no acervo."), sem lacuna, porque a pergunta é pública.
+     */
+    private Resolved resolve(
+            AnswerRequest request, Plan plan, Optional<QuestionAnalysis> previous, Timer timer, Progress progress) {
+        Retrieval found = retrieve(request.question(), plan);
+        timer.lap("busca");
+        Route route = decider.decide(plan.analysis(), found.chunks(), plan.missing());
+        if (!web.active()
+                || !decider.webFallbackNeeded(plan.analysis(), found.chunks(), plan.missing())
+                || !web.supports(plan.analysis().language().orElse(""))) {
+            return new Resolved(plan, found, route, false, 0L);
+        }
+        if (progress.clientGone()) {
+            throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
+        }
+        progress.route(Route.WEB_FALLBACK);
+        List<Document> saved = fetchFromWeb(request, plan);
+        // Lida logo depois da gravação (cujo evento já esvaziou o cache) e antes de refazer a busca: uma invalidação
+        // que chegue depois disso ainda impede esta resposta de entrar no cache.
+        long epochAfterFetch = cache.epoch();
+        timer.lap("web");
+        if (saved.isEmpty()) {
+            return new Resolved(plan, found, route, false, epochAfterFetch);
+        }
+        Plan updated = plan(request.question(), previous);
+        Retrieval again = retrieve(request.question(), updated);
+        timer.lap("busca");
+        return new Resolved(
+                updated,
+                again,
+                decider.decide(updated.analysis(), again.chunks(), updated.missing()),
+                true,
+                epochAfterFetch);
+    }
+
+    /**
+     * Quais versões buscar na web: as pedidas e ausentes do acervo (numa comparação, só as ausentes, dividindo o
+     * páginas entre elas) ou, quando a versão existe mas o trecho não serve, a versão em uso. Sem versão certa para
+     * rotular o documento não se busca nada: gravar uma página sob a versão errada seria pior que não ter a página.
+     */
+    private List<Document> fetchFromWeb(AnswerRequest request, Plan plan) {
+        int budget = web.maxPages();
+        List<String> targets = !plan.missing().isEmpty()
+                ? plan.missing()
+                : plan.versionUsed().map(List::of).orElse(List.of());
+        if (targets.isEmpty() || budget < 1) {
+            return List.of();
+        }
+        targets = targets.subList(0, Math.min(targets.size(), budget));
+        int perVersion = Math.max(1, budget / targets.size());
+        // Um prazo só para a pergunta inteira: cada versão recebe o que sobrou do anterior, não um prazo novo.
+        long deadline = System.nanoTime() + web.timeout().toNanos();
+        List<Document> saved = new ArrayList<>();
+        for (String version : targets) {
+            int left = budget - saved.size();
+            Duration remaining = Duration.ofNanos(deadline - System.nanoTime());
+            if (left < 1 || remaining.isNegative() || remaining.isZero()) {
+                break;
+            }
+            saved.addAll(web.fetchAndStore(
+                    request.question(),
+                    plan.analysis(),
+                    version,
+                    request.actor(),
+                    Math.min(perVersion, left),
+                    remaining));
+        }
+        return saved;
+    }
+
+    /**
+     * Pergunta só pública, de versão ausente do acervo, de linguagem sem fontes oficiais: o código diz isso,
+     * sem modelo e sem web. Só vale quando a rota já é NOT_DOCUMENTED (com a versão ou o assunto no acervo, responde-se
+     * normalmente).
+     */
+    private boolean unsupported(Plan plan) {
+        return RouteDecider.publicOnly(plan.analysis())
+                && plan.analysis().language().isPresent()
+                && !plan.missing().isEmpty()
+                && !web.supports(plan.analysis().language().get());
+    }
+
     /** Fluxo sobre a documentação interna sem trecho relevante: o código diz que o fluxo não é detalhado. */
     private static boolean flowOnInternal(Plan plan) {
         return plan.analysis().type() == QuestionType.FLOW
@@ -409,7 +544,12 @@ public final class AnswerService {
     }
 
     private Answered notDocumented(
-            Plan plan, String conversationId, List<ScoredChunk> chunks, Timer timer, AnswerSink sink) {
+            Plan plan,
+            String conversationId,
+            List<ScoredChunk> chunks,
+            Timer timer,
+            AnswerSink sink,
+            boolean unsupportedLanguage) {
         AnswerMetadata metadata = new AnswerMetadata(
                 conversationId,
                 Route.NOT_DOCUMENTED,
@@ -422,10 +562,15 @@ public final class AnswerService {
                 timer.timings(),
                 List.of());
         sink.metadata(metadata);
+        // Os avisos de versão ausente vêm sempre antes; só então o aviso de que não há fontes oficiais.
         missingNotices(plan).forEach(sink::text);
-        if (!plan.skipSearch()) {
-            plan.inferred().ifPresent(v -> sink.text(INFERRED_VERSION.formatted(v)));
-            sink.text(flowOnInternal(plan) ? PromptBuilder.FLOW_NOT_DETAILED : NO_CONTEXT);
+        if (unsupportedLanguage) {
+            sink.text(NO_OFFICIAL_SOURCES);
+        } else {
+            if (!plan.skipSearch()) {
+                plan.inferred().ifPresent(v -> sink.text(INFERRED_VERSION.formatted(v)));
+                sink.text(flowOnInternal(plan) ? PromptBuilder.FLOW_NOT_DETAILED : NO_CONTEXT);
+            }
         }
         timer.total();
         return new Answered(withFinal(metadata, 0, timer, List.of()));

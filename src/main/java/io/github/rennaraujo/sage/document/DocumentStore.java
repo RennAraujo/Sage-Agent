@@ -9,6 +9,12 @@ public interface DocumentStore {
     /** Grava ou substitui o documento de mesmo id. */
     void save(Document doc);
 
+    /**
+     * Grava só se o id ainda não existe, de forma atômica. Devolve {@code false}, sem alterar nada nem publicar evento,
+     * quando o id já estava no acervo.
+     */
+    boolean saveIfAbsent(Document doc);
+
     Optional<Document> find(DocumentId id);
 
     List<DocumentMetadata> listMetadata();

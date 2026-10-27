@@ -106,6 +106,40 @@ class EncryptedDocumentStoreTest {
     }
 
     @Test
+    void saveIfAbsentWritesOnceAndPublishesOneEvent() {
+        Document first = publicDoc();
+        Document other = new Document(first.metadata(), "# Outro corpo\n");
+
+        assertThat(store.saveIfAbsent(first)).isTrue();
+        assertThat(store.saveIfAbsent(other)).isFalse();
+
+        assertThat(store.find(first.metadata().id())).hasValue(first);
+        assertThat(events).hasSize(1);
+        assertThat(blobs.list("docs/")).hasSize(1);
+    }
+
+    @Test
+    void saveIfAbsentIsAtomicUnderConcurrency() throws Exception {
+        Document doc = publicDoc();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            List<java.util.concurrent.Future<Boolean>> results = new java.util.ArrayList<>();
+            for (int i = 0; i < 16; i++) {
+                results.add(pool.submit(() -> store.saveIfAbsent(doc)));
+            }
+            int wins = 0;
+            for (java.util.concurrent.Future<Boolean> result : results) {
+                wins += result.get() ? 1 : 0;
+            }
+            assertThat(wins).isEqualTo(1);
+            assertThat(events).hasSize(1);
+            assertThat(blobs.list("docs/")).hasSize(1);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void blobKeysAreOpaque() {
         store.save(publicDoc());
         store.save(internalDoc());

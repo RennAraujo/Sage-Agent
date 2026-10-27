@@ -43,7 +43,7 @@ public final class QuestionAnalyzer {
             throw new IllegalArgumentException("A pergunta não pode ser nula");
         }
         String text = AliasCatalog.normalize(question);
-        boolean internalHit = catalog.matchesInternal(text);
+        boolean internalHit = catalog.mentionsInternal(question);
         Optional<PublicPick> publicHit = pickPublic(text);
         List<String> genericVersions = distinct(allMatches(GENERIC_VERSION, text));
 

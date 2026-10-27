@@ -80,7 +80,7 @@ sage:
     timeout: 50s
   questions:
     # Orçamento de análise, busca e auditoria antes do modelo. O SSE fica aberto por isto mais sage.models.timeout.
-    preparation-timeout: 10s
+    preparation-timeout: 20s
     index-retry-after: 5s
   cache:
     # Respostas completas em memória (nunca em disco), só para a primeira pergunta de uma conversa. Qualquer documento
@@ -104,3 +104,19 @@ sage:
     # Perguntas que a documentação interna não respondeu, cifradas, uma por ocorrência. Passou do teto, as mais antigas
     # são apagadas na gravação.
     max-entries: 5000
+  web:
+    # Fallback web: só páginas de fontes oficiais. Chave: linguagem (id de aliases-publicos.yml); valor: domínios aceitos
+    # (o domínio e seus subdomínios, sempre por https). Linguagem fora da lista não tem fallback.
+    allowlist:
+      java: [docs.oracle.com, openjdk.org]
+      spring-boot: [docs.spring.io]
+      spring-framework: [docs.spring.io]
+      spring-security: [docs.spring.io]
+    max-pages-per-question: 3
+    fetch-timeout: 5s
+    max-page-bytes: 2MB
+    max-redirects: 3
+    # Prazo do fallback inteiro (busca e até 3 páginas). Precisa ser menor que sage.questions.preparation-timeout.
+    fallback-timeout: 8s
+    # Sem chave, o fallback fica desligado (aviso na subida). Chave do plano gratuito do Brave Search: https://brave.com/search/api/
+    brave-api-key: ${SAGE_BRAVE_API_KEY:}

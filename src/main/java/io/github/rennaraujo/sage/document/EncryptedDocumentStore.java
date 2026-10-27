@@ -43,11 +43,24 @@ public final class EncryptedDocumentStore implements DocumentStore {
 
     @Override
     public void save(Document doc) {
+        write(doc, false);
+    }
+
+    @Override
+    public boolean saveIfAbsent(Document doc) {
+        return write(doc, true);
+    }
+
+    /** Com {@code onlyIfAbsent}, a checagem e a gravação acontecem sob o mesmo lock do id: um único vencedor. */
+    private boolean write(Document doc, boolean onlyIfAbsent) {
         DocumentId id = doc.metadata().id();
         byte[] payload = parser.render(doc).getBytes(StandardCharsets.UTF_8);
         byte[] encrypted = cipher.encrypt(payload).toBytes();
         synchronized (lockFor(id)) {
             Entry existing = catalog.get(id);
+            if (onlyIfAbsent && existing != null) {
+                return false;
+            }
             // Mesmo id reaproveita a chave do blob: a troca é um único put atômico e não sobra blob órfão.
             String blobKey = existing != null ? existing.blobKey() : BLOB_PREFIX + UUID.randomUUID();
             blobs.put(blobKey, encrypted);
@@ -55,6 +68,7 @@ public final class EncryptedDocumentStore implements DocumentStore {
             // Dentro do lock: a ordem dos eventos de um id é a ordem das operações no armazém.
             events.publishEvent(new DocumentSavedEvent(doc));
             LOG.info("Documento salvo: {}", id.logRef());
+            return true;
         }
     }
 

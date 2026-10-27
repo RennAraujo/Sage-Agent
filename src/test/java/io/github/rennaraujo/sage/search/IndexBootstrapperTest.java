@@ -65,6 +65,11 @@ class IndexBootstrapperTest {
         }
 
         @Override
+        public boolean saveIfAbsent(Document doc) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Optional<Document> find(DocumentId id) {
             return docs.stream().filter(d -> d.metadata().id().equals(id)).findFirst();
         }

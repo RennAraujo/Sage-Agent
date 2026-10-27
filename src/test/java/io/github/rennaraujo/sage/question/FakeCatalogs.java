@@ -58,6 +58,15 @@ final class FakeCatalogs {
         }
 
         @Override
+        public boolean saveIfAbsent(Document doc) {
+            if (items.stream().anyMatch(m -> m.id().equals(doc.metadata().id()))) {
+                return false;
+            }
+            save(doc);
+            return true;
+        }
+
+        @Override
         public Optional<Document> find(DocumentId id) {
             return Optional.empty();
         }
