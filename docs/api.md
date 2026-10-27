@@ -1,6 +1,6 @@
 # API
 
-Este documento descreve o contrato HTTP do Sage: autenticação, perguntas, documentos e lacunas. O endpoint de importação entra nas próximas tarefas e ganha seção aqui quando chegar.
+Este documento descreve o contrato HTTP do Sage: autenticação, perguntas, documentos, lacunas e importação.
 
 ## Autenticação e papéis
 
@@ -270,3 +270,30 @@ Só `EDITOR`. Lista as perguntas sobre a documentação interna que ficaram sem 
 `pergunta` é o texto da ocorrência mais recente do grupo, como a pessoa escreveu. `ultimaVez` é um instante em UTC. O parâmetro opcional `limite` (padrão 100, máximo 500) corta a lista; valor acima de 500 vale 500 e abaixo de 1 vale 1. Um `limite` que não é número dá 400 com `application/problem+json`. Leitor recebe 403, sem chave 401.
 
 O resumo cobre só as ocorrências ainda guardadas (`sage.gaps.max-entries`, padrão 5000), então `vezes` pode ficar abaixo do total histórico quando o teto é atingido. Mais detalhes em [Acervo e upload](acervo-e-upload.md#lacunas).
+## Importação
+
+Semeia o acervo público a partir de uma página raiz de documentação oficial. Só `EDITOR`. O comportamento (escopo, limites, o que é ignorado) está em `docs/acervo-e-upload.md`.
+
+### POST /api/importar
+
+Corpo em JSON:
+
+```
+{"url": "https://docs.spring.io/spring-boot/reference/", "linguagem": "spring-boot", "versao": "4.1", "profundidade": 2}
+```
+
+`url`, `linguagem` e `versao` são obrigatórios (vazio dá 400). `profundidade` é opcional, de 0 a `sage.import.max-depth` (2 por padrão); omitida, vale o máximo. A resposta é 202 com o id do job:
+
+```
+{"id": "0262a24b-5fa3-4f3c-9597-6f7713dc6c27"}
+```
+
+Erros: 422 se a URL não for https, trouxer usuário e senha, estiver mal formada ou não pertencer à allowlist da linguagem, e também se a `profundidade` passar do máximo ou a `versao` não formar um id válido; a resposta nunca repete a URL recebida. 429 pelo limite de `UPLOAD` da chave ou por já haver `sage.import.max-concurrent-jobs` jobs rodando (ou o registro cheio de jobs em andamento), 403 para `READER`, 500 se a auditoria falhar (nenhum job começa).
+
+### GET /api/importar/{id}
+
+```
+{"id": "0262a24b-5fa3-4f3c-9597-6f7713dc6c27", "status": "DONE", "importadas": 41, "ignoradas": 3, "colisoes": 0, "falhas": 1}
+```
+
+`status` é `RUNNING`, `DONE` ou `FAILED`. `importadas` são as páginas gravadas; `ignoradas`, as que continham segredo, vieram vazias, já existiam no acervo ou terminaram fora do escopo depois de um redirect; `colisoes`, as que deram o mesmo id de outra página do mesmo job; `falhas`, as que não puderam ser baixadas (erro HTTP, host fora da allowlist, tempo esgotado, tamanho acima do limite). `FAILED` quer dizer que a página raiz não pôde ser baixada (ou redirecionou para fora do escopo), que a auditoria ou o armazenamento falharam no meio do caminho, que o prazo `sage.import.max-duration` estourou ou que a aplicação parou; as contagens até ali ficam. Os contadores sobem durante a execução, então dá para acompanhar um job em andamento. Qualquer `EDITOR` consulta qualquer job; id desconhecido (ou já descartado da memória) dá 404.

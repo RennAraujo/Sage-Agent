@@ -120,3 +120,12 @@ sage:
     fallback-timeout: 8s
     # Sem chave, o fallback fica desligado (aviso na subida). Chave do plano gratuito do Brave Search: https://brave.com/search/api/
     brave-api-key: ${SAGE_BRAVE_API_KEY:}
+  import:
+    # Semeadura do acervo por importação (POST /api/importar). max-depth: cliques a partir da página raiz (0 = só a
+    # raiz); max-pages: teto de páginas baixadas por importação; jobs-kept: quantas importações ficam consultáveis.
+    max-depth: 2
+    max-pages: 200
+    jobs-kept: 50
+    # Jobs simultâneos (o seguinte recebe 429) e prazo total de cada job (estourou: FAILED, com o que já entrou).
+    max-concurrent-jobs: 2
+    max-duration: 10m

@@ -113,6 +113,36 @@ Cada gravação, revisão e remoção gera um evento de auditoria (`DOCUMENT_UPL
 
 Limitações conhecidas: o Tika roda dentro do processo da aplicação, sem isolamento. Um PDF ou DOCX malicioso que explore uma falha do parser afeta a aplicação; o upload é restrito a `EDITOR` e há limite de tamanho, mas se o upload for aberto a gente de fora vale mover a extração para um processo separado. O padrão do JWT exige que `eyJ` não venha colado a outro caractere de palavra (`(?<![\w-])eyJ...`): sem isso, uma linha só de `eyJ` repetido custava tempo quadrático (13 s com 120 KB, horas com 10 MB), um jeito barato de prender threads. É um desvio deliberado do padrão original, com teste de tempo (1 MB de linha adversária em menos de 2 s para cada padrão). O efeito colateral é não pegar um JWT colado em texto sem separador, como `xeyJ...`.
 
+## Semeando com importação
+
+Subir a documentação oficial arquivo por arquivo não escala. `POST /api/importar` recebe a URL de uma página raiz (a home do manual, por exemplo `https://docs.spring.io/spring-boot/reference/`), a linguagem, a versão e a profundidade, e deixa um job em segundo plano baixar as páginas, converter para Markdown e gravar no acervo. A resposta é 202 com o id do job; o andamento sai em `GET /api/importar/{id}`. O contrato está em `docs/api.md`.
+
+O que o job faz, nessa ordem:
+
+- Baixa só pelo mesmo `AllowlistedPageFetcher` do fallback web, então valem as mesmas travas contra SSRF: https na porta 443, host da allowlist da linguagem (`sage.web.allowlist`), DNS resolvido uma vez e endereços públicos, redirects conferidos a cada salto, tamanho e prazo limitados. A raiz que não passa nisso dá 422, sem repetir a URL na resposta.
+- Percorre em largura, só no mesmo host e dentro do prefixo de path da raiz. Raiz terminada em `/` usa o próprio caminho como prefixo; raiz cujo último trecho termina em `.html` ou `.htm` (qualquer caixa) é uma página e usa o diretório dela (`/guia/index.html` vira `/guia/`); qualquer outra raiz sem barra final é um diretório e vale ela mesma e tudo sob a barra (`/guia`, ou `/spring-boot/4.1`, onde o `.1` não faz da versão uma extensão e `/spring-boot/4.0` fica de fora). A comparação é por segmento: `/guia-extra` não entra no prefixo `/guia`. Os links vêm do HTML baixado (jsoup), são resolvidos contra a página e só seguem os que ficam em https no mesmo host e porta. Fragmento e query são descartados para deduplicar, então `a.html#x` e `a.html?v=2` são a mesma página.
+- Respeita `sage.import.max-depth` (padrão 2; a raiz é a profundidade 0) e `sage.import.max-pages` (padrão 200 páginas baixadas). O pedido pode pedir menos profundidade; pedir mais que o máximo dá 422. Sem `profundidade` no corpo vale o máximo.
+- Converte com o `HtmlToMarkdown` do fallback (que arranca texto escondido, script e afins) e passa o resultado no `SecretScanner`. Página com segredo detectado é ignorada e contada em `ignoradas`; o valor encontrado não é registrado em lugar nenhum.
+- Grava `publico/<linguagem>/<versao>/<slug>.md` com `revisado: false`, `url_origem` e `coletado_em`. O slug sai do caminho da página relativo à raiz: sem extensão, `/` vira `-`, minúsculas e sem acento, como no upload (a raiz vira `index`). Os documentos importados entram como não revisados de propósito: ninguém leu o conteúdo antes de entrar, e a marca só muda quando um editor chama `PATCH /api/documentos`.
+
+Documento que já existe no acervo é ignorado, não sobrescrito, e conta em `ignoradas`. A gravação usa `DocumentStore.saveIfAbsent`, que confere e grava sob o mesmo lock do id, então dois jobs simultâneos não se atropelam. (O upload ainda usa `find` seguido de `save`; migrá-lo para o mesmo método fica para outra tarefa.) Não há como pedir substituição aqui: para atualizar uma versão já importada, apague os documentos e importe de novo. Duas páginas do mesmo job cujos caminhos viram o mesmo slug (`a/b.html` e `a-b.html`) são contadas à parte, em `colisoes`: a primeira entra, a segunda não. É raro em documentação oficial e fica visível.
+
+Cada POST consome uma permissão do limite de `UPLOAD` da chave (`sage.rate-limit.uploads-per-minute`), não uma por página: o limite protege o início do job, e o custo de cada job é limitado por `max-pages` e pelo prazo de cada download. A auditoria registra `IMPORT_STARTED` antes de qualquer download (se falhar, a resposta é 500 e nenhum job nasce) e `DOCUMENT_UPLOADED` em duas fases por página, como no fallback web: `resultado=tentativa` antes de gravar e `salvo`, `existente` ou `falhou` depois. Se a auditoria ou o armazenamento falharem no meio, o job para com status `FAILED` e o que já foi gravado fica. Também termina em `FAILED` (com as contagens até ali) o job cuja página raiz não baixa ou termina, depois de um redirect, fora do escopo; o que estoura `sage.import.max-duration`; e o que ainda roda quando a aplicação para. O cancelamento só é visto entre páginas, nunca entre a auditoria e a gravação de uma página, e um erro inesperado na thread do job também resulta em `FAILED`, nunca num job preso em `RUNNING`.
+
+Limites de execução. No máximo `sage.import.max-concurrent-jobs` (2) jobs rodam ao mesmo tempo; o POST seguinte recebe 429 com `Retry-After`, sem auditar nem criar job. Cada job tem prazo total de `sage.import.max-duration` (10 minutos), conferido entre páginas: o prazo pode passar em até o tempo de um download (`sage.web.fetch-timeout`). O registro guarda os últimos `sage.import.jobs-kept` jobs (50); quando enche, sai o mais antigo já terminado, e job em andamento nunca é descartado (se todos estão rodando, o POST recebe 429).
+
+Limitações. Os jobs vivem na memória do processo: reiniciar a aplicação apaga a lista; numa parada limpa os jobs em andamento são cancelados (espera de até 2 s) e marcados `FAILED`, e o que já foi gravado continua. Todo `EDITOR` enxerga os jobs de todos os editores, porque o id é um UUID aleatório e o status só traz contagens, sem conteúdo nem URL. Não há renderização de JavaScript: página montada no navegador (SPA) chega vazia e é ignorada. Os links são seguidos como estão, então menus laterais enormes podem encher o limite de páginas com navegação em vez de conteúdo; nesse caso aponte a raiz para uma seção mais específica.
+
+```yaml
+sage:
+  import:
+    max-depth: 2
+    max-pages: 200
+    jobs-kept: 50
+    max-concurrent-jobs: 2
+    max-duration: 10m
+```
+
 ## Template do Obsidian
 
 Quem mantém a documentação no Obsidian pode copiar um destes modelos para o cofre e trocar os valores. Ficam em `src/main/resources/templates/obsidian/`:

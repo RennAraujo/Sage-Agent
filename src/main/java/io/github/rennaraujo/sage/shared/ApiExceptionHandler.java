@@ -7,6 +7,7 @@ import io.github.rennaraujo.sage.upload.SecretFinding;
 import io.github.rennaraujo.sage.upload.SecretsFoundException;
 import io.github.rennaraujo.sage.upload.UnsupportedDocumentException;
 import io.github.rennaraujo.sage.upload.UploadTooLargeException;
+import io.github.rennaraujo.sage.web.ImportJobNotFoundException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.LinkedHashMap;
@@ -90,6 +91,11 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(DocumentNotFoundException.class)
     ResponseEntity<ProblemDetail> documentNotFound(DocumentNotFoundException e) {
+        return problemWithDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    @ExceptionHandler(ImportJobNotFoundException.class)
+    ResponseEntity<ProblemDetail> importNotFound(ImportJobNotFoundException e) {
         return problemWithDetail(HttpStatus.NOT_FOUND, e.getMessage());
     }
 
