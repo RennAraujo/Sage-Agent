@@ -8,6 +8,7 @@ import io.github.rennaraujo.sage.document.Document;
 import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.gap.GapRegistry;
 import io.github.rennaraujo.sage.question.guard.AnswerGuard;
+import io.github.rennaraujo.sage.question.guard.AnswerGuardFactory;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelEvent;
 import io.github.rennaraujo.sage.question.llm.ModelProperties;
@@ -38,6 +39,7 @@ import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
@@ -102,6 +104,7 @@ public final class AnswerService {
     private final GapRegistry gaps;
     private final Clock clock;
     private final WebFallback web;
+    private final AnswerGuardFactory guards;
 
     /** Sem fallback web. */
     public AnswerService(
@@ -134,7 +137,8 @@ public final class AnswerService {
                 conversations,
                 gaps,
                 clock,
-                WebFallback.NONE);
+                WebFallback.NONE,
+                AnswerGuardFactory.citationsOnly());
     }
 
     public AnswerService(
@@ -153,6 +157,43 @@ public final class AnswerService {
             GapRegistry gaps,
             Clock clock,
             WebFallback web) {
+        this(
+                analyzer,
+                catalog,
+                retriever,
+                index,
+                decider,
+                promptBuilder,
+                flowExpander,
+                languageModel,
+                audit,
+                models,
+                cache,
+                conversations,
+                gaps,
+                clock,
+                web,
+                AnswerGuardFactory.citationsOnly());
+    }
+
+    public AnswerService(
+            QuestionAnalyzer analyzer,
+            AliasCatalog catalog,
+            Retriever retriever,
+            SearchIndex index,
+            RouteDecider decider,
+            PromptBuilder promptBuilder,
+            FlowContextExpander flowExpander,
+            LanguageModel languageModel,
+            AuditLog audit,
+            ModelProperties models,
+            AnswerCache cache,
+            ConversationStore conversations,
+            GapRegistry gaps,
+            Clock clock,
+            WebFallback web,
+            AnswerGuardFactory guards) {
+        this.guards = guards;
         this.analyzer = analyzer;
         this.catalog = catalog;
         this.retriever = retriever;
@@ -251,14 +292,17 @@ public final class AnswerService {
         }
         sink.done(answered.metadata());
         LOG.info(
-                "Pergunta respondida: rota={} modelo={} escalada={} topScore={} trechos={} descartadas={} tempos={} "
-                        + "refs={}",
+                "Pergunta respondida: rota={} modelo={} escalada={} topScore={} trechos={} descartadas={} "
+                        + "segredosRemovidos={} nliVerificacoes={} nliMs={} tempos={} refs={}",
                 answered.metadata().route(),
                 answered.metadata().model().map(Enum::name).orElse("nenhum"),
                 progress.escalated(),
                 String.format(Locale.ROOT, "%.3f", RouteDecider.topScore(chunks)),
                 chunks.size(),
                 answered.metadata().droppedSentences(),
+                answered.metadata().redactedSecrets(),
+                progress.nliChecks(),
+                progress.nliMillis(),
                 answered.metadata().timingsMillis(),
                 chunks.stream().map(c -> c.chunk().documentId().logRef()).toList());
     }
@@ -559,6 +603,7 @@ public final class AnswerService {
                 plan.versionUsed(),
                 false,
                 0,
+                0,
                 timer.timings(),
                 List.of());
         sink.metadata(metadata);
@@ -573,7 +618,7 @@ public final class AnswerService {
             }
         }
         timer.total();
-        return new Answered(withFinal(metadata, 0, timer, List.of()));
+        return new Answered(withFinal(metadata, 0, 0, timer, List.of()));
     }
 
     /**
@@ -605,6 +650,7 @@ public final class AnswerService {
                 citations,
                 plan.versionUsed(),
                 chunks.stream().anyMatch(c -> !c.chunk().reviewed()),
+                0,
                 0,
                 timer.timings(),
                 List.of());
@@ -647,7 +693,8 @@ public final class AnswerService {
         }
         timer.lap("modelo");
         timer.total();
-        return new Answered(withFinal(opening.metadata(), progress.dropped(), timer, emitter.consulted()));
+        return new Answered(
+                withFinal(opening.metadata(), progress.dropped(), progress.redacted(), timer, emitter.consulted()));
     }
 
     /** Uma chamada ao modelo, com guard novo; devolve {@code true} se o modelo pediu escalada a tempo. */
@@ -659,6 +706,8 @@ public final class AnswerService {
         private final Deadline deadline;
         private final boolean comparison;
         private final boolean flow;
+        private final Object emitLock = new Object();
+        private boolean aborted;
 
         Call(
                 List<ScoredChunk> chunks,
@@ -678,38 +727,67 @@ public final class AnswerService {
         }
 
         boolean run(ModelTier tier, Prompt prompt) {
-            AnswerGuard guard = new AnswerGuard(chunks.size(), comparison, flow);
+            AnswerGuard guard = guards.create(evidence(chunks), comparison, flow);
             progress.start(guard, citations);
             if (progress.clientGone()) {
                 throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
             }
             AtomicBoolean escalated = new AtomicBoolean();
+            // O guard roda num scheduler próprio: a verificação de fundamentação leva centenas de ms por frase e não
+            // pode bloquear a thread que entrega o stream do SDK. Os cortes por cliente e por prazo ficam depois do
+            // guard, para valerem mesmo com uma verificação em curso (ela termina sozinha, sem emitir; ver abort()).
             languageModel.stream(tier, prompt)
-                    .takeUntilOther(progress.closed())
-                    .takeUntilOther(deadline.reached())
+                    .publishOn(guards.scheduler())
                     .takeUntil(event -> prompt.allowEscalation()
                             && event instanceof ModelEvent.EscalationRequested
                             && !emitter.started())
                     .doOnNext(event -> handle(event, tier, prompt, guard, escalated))
+                    .takeUntilOther(progress.closed())
+                    .takeUntilOther(deadline.reached())
                     .blockLast();
+            if (progress.clientGone()) {
+                abort();
+                throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
+            }
+            if (deadline.hit()) {
+                abort();
+                throw new AnswerAbortedException(AnswerAbortedException.Reason.MODEL_DEADLINE);
+            }
+            if (escalated.get()) {
+                return true;
+            }
+            // O finish() também verifica (a última frase só fecha aqui) e roda nesta thread: o prazo é conferido de
+            // novo antes de emitir, e o tempo do NLI conta contra o prazo total do modelo.
+            List<String> tail = guard.finish();
             if (progress.clientGone()) {
                 throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
             }
             if (deadline.hit()) {
                 throw new AnswerAbortedException(AnswerAbortedException.Reason.MODEL_DEADLINE);
             }
-            if (escalated.get()) {
-                return true;
-            }
-            guard.finish().forEach(emitter::accepted);
+            tail.forEach(emitter::accepted);
             emitter.finish();
             return false;
+        }
+
+        /** Depois disto nada mais é emitido: uma verificação ainda em curso termina e é ignorada. */
+        private void abort() {
+            synchronized (emitLock) {
+                aborted = true;
+            }
         }
 
         private void handle(
                 ModelEvent event, ModelTier tier, Prompt prompt, AnswerGuard guard, AtomicBoolean escalated) {
             switch (event) {
-                case ModelEvent.TextDelta delta -> guard.accept(delta.text()).forEach(emitter::accepted);
+                case ModelEvent.TextDelta delta -> {
+                    List<String> approved = guard.accept(delta.text());
+                    synchronized (emitLock) {
+                        if (!aborted) {
+                            approved.forEach(emitter::accepted);
+                        }
+                    }
+                }
                 case ModelEvent.EscalationRequested ignored -> {
                     if (prompt.allowEscalation() && !emitter.started()) {
                         escalated.set(true);
@@ -725,6 +803,13 @@ public final class AnswerService {
                 }
             }
         }
+    }
+
+    /** O texto de cada trecho do contexto, na ordem das citações: é contra ele que o guard confere as frases. */
+    private static List<String> evidence(List<ScoredChunk> chunks) {
+        return chunks.stream()
+                .map(c -> c.chunk().headingPath() + "\n" + c.chunk().text())
+                .toList();
     }
 
     /** Avisos fixos que vêm logo depois do {@code metadata}: versões fora do acervo e versão inferida. */
@@ -774,6 +859,7 @@ public final class AnswerService {
                     m.versionUsed(),
                     m.unreviewedSources(),
                     m.droppedSentences(),
+                    m.redactedSecrets(),
                     m.timingsMillis(),
                     m.consulted());
         }
@@ -978,7 +1064,8 @@ public final class AnswerService {
                 progress.route(),
                 progress.escalated(),
                 progress.citedDocIds(),
-                progress.dropped());
+                progress.dropped(),
+                progress.redacted());
     }
 
     private void recordAnswered(
@@ -988,7 +1075,8 @@ public final class AnswerService {
             Route route,
             boolean escalated,
             List<String> citedDocIds,
-            int dropped) {
+            int dropped,
+            int redacted) {
         Map<String, String> details = new LinkedHashMap<>();
         details.put("conversationId", conversationId);
         details.put("outcome", outcome);
@@ -997,6 +1085,7 @@ public final class AnswerService {
         details.put("escalated", Boolean.toString(escalated));
         details.put("citedDocIds", String.join(",", citedDocIds));
         details.put("droppedSentences", Integer.toString(dropped));
+        details.put("redactedSecrets", Integer.toString(redacted));
         audit.record(new AuditEvent(AuditEventType.QUESTION_ANSWERED, actor, clock.instant(), details));
     }
 
@@ -1017,7 +1106,9 @@ public final class AnswerService {
      * {@code NOT_DOCUMENTED} é barato de refazer e muda assim que o acervo muda.
      */
     private static boolean cacheable(AnswerMetadata metadata) {
-        return metadata.route() != Route.NOT_DOCUMENTED && metadata.droppedSentences() == 0;
+        return metadata.route() != Route.NOT_DOCUMENTED
+                && metadata.droppedSentences() == 0
+                && metadata.redactedSecrets() == 0;
     }
 
     /**
@@ -1050,7 +1141,7 @@ public final class AnswerService {
             cached.sentences().forEach(sink::text);
         } catch (RuntimeException e) {
             try {
-                recordAnswered(request.actor(), conversationId, "interrupted", Route.CACHE, false, cited, 0);
+                recordAnswered(request.actor(), conversationId, "interrupted", Route.CACHE, false, cited, 0, 0);
             } catch (AuditException auditFailure) {
                 e.addSuppressed(auditFailure);
             }
@@ -1058,7 +1149,7 @@ public final class AnswerService {
         }
         timer.total();
         AnswerMetadata done = replayed(stored, conversationId, timer.timings(), stored.consulted());
-        recordAnswered(request.actor(), conversationId, "completed", Route.CACHE, false, cited, 0);
+        recordAnswered(request.actor(), conversationId, "completed", Route.CACHE, false, cited, 0, 0);
         remember.run();
         sink.done(done);
         LOG.info(
@@ -1090,6 +1181,7 @@ public final class AnswerService {
                 stored.versionUsed(),
                 stored.unreviewedSources(),
                 stored.droppedSentences(),
+                stored.redactedSecrets(),
                 timings,
                 consulted);
     }
@@ -1138,7 +1230,7 @@ public final class AnswerService {
     }
 
     private static AnswerMetadata withFinal(
-            AnswerMetadata m, int dropped, Timer timer, List<ConsultedSource> consulted) {
+            AnswerMetadata m, int dropped, int redacted, Timer timer, List<ConsultedSource> consulted) {
         return new AnswerMetadata(
                 m.conversationId(),
                 m.route(),
@@ -1148,6 +1240,7 @@ public final class AnswerService {
                 m.versionUsed(),
                 m.unreviewedSources(),
                 dropped,
+                redacted,
                 timer.timings(),
                 consulted);
     }
@@ -1166,6 +1259,9 @@ public final class AnswerService {
         private volatile Route route = Route.NOT_DOCUMENTED;
         private volatile boolean escalated;
         private final AtomicInteger droppedBefore = new AtomicInteger();
+        private final AtomicInteger redactedBefore = new AtomicInteger();
+        private final AtomicLong nliMillisBefore = new AtomicLong();
+        private final AtomicInteger nliChecksBefore = new AtomicInteger();
 
         void close() {
             gone.set(true);
@@ -1202,6 +1298,9 @@ public final class AnswerService {
             AnswerGuard previous = guard;
             if (previous != null) {
                 droppedBefore.addAndGet(previous.dropped());
+                redactedBefore.addAndGet(previous.redacted());
+                nliMillisBefore.addAndGet(previous.nliMillis());
+                nliChecksBefore.addAndGet(previous.nliChecks());
             }
             this.citations = context;
             this.guard = started;
@@ -1230,6 +1329,21 @@ public final class AnswerService {
         int dropped() {
             AnswerGuard current = guard;
             return droppedBefore.get() + (current == null ? 0 : current.dropped());
+        }
+
+        long nliMillis() {
+            AnswerGuard current = guard;
+            return nliMillisBefore.get() + (current == null ? 0 : current.nliMillis());
+        }
+
+        int nliChecks() {
+            AnswerGuard current = guard;
+            return nliChecksBefore.get() + (current == null ? 0 : current.nliChecks());
+        }
+
+        int redacted() {
+            AnswerGuard current = guard;
+            return redactedBefore.get() + (current == null ? 0 : current.redacted());
         }
     }
 

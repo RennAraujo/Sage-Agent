@@ -129,3 +129,14 @@ sage:
     # Jobs simultâneos (o seguinte recebe 429) e prazo total de cada job (estourou: FAILED, com o que já entrou).
     max-concurrent-jobs: 2
     max-duration: 10m
+  guard:
+    # Probabilidade mínima de entailment (NLI) para uma frase contar como sustentada pelo trecho citado.
+    min-entailment: 0.5
+    # Teto de tokens do par (trecho + frase); o custo do NLI é linear nele, o modelo aceita até 512.
+    nli-max-tokens: 256
+    # true: sem o modelo de NLI a aplicação não sobe (produção). false: o guard degrada para só citações e segredos.
+    require-nli: false
+    # Prazo da verificação de uma frase. Estourou, a frase é descartada (falha fechado) e entra na contagem de descartadas.
+    nli-timeout-per-sentence: 1500ms
+    # Inferências do NLI em curso ao mesmo tempo (as que estouraram o prazo e ainda não terminaram contam). 0 = metade dos núcleos, ao menos 1.
+    nli-max-concurrency: 0

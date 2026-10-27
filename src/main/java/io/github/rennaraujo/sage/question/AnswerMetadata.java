@@ -9,8 +9,14 @@ import java.util.Optional;
 
 /**
  * Metadados da resposta, enviados antes do texto e de novo no fim (com frases descartadas e tempos finais).
- * {@code versionUsed} é a versão pública usada no filtro da busca, vazia quando não houve uma só. {@code consulted} só
- * é preenchido no fim: são as fontes que as frases aprovadas citaram, as mesmas das linhas "Documentação consultada".
+ *
+ * <p>{@code droppedSentences} conta o que o guard barrou (sem citação, não sustentado pelo NLI, prazo estourado);
+ * {@code redactedSecrets} conta os segmentos trocados por aviso de segredo.
+ *
+ * <p>{@code versionUsed} é a versão pública usada no filtro da busca, vazia quando não houve uma só.
+ *
+ * <p>{@code consulted} só é preenchido no fim: são as fontes que as frases aprovadas citaram, as mesmas das linhas
+ * "Documentação consultada".
  */
 public record AnswerMetadata(
         String conversationId,
@@ -21,6 +27,7 @@ public record AnswerMetadata(
         Optional<String> versionUsed,
         boolean unreviewedSources,
         int droppedSentences,
+        int redactedSecrets,
         Map<String, Long> timingsMillis,
         List<ConsultedSource> consulted) {
 

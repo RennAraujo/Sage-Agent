@@ -19,6 +19,9 @@ import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.gap.GapRegistry;
+import io.github.rennaraujo.sage.question.guard.AnswerGuardFactory;
+import io.github.rennaraujo.sage.question.guard.GroundednessChecker;
+import io.github.rennaraujo.sage.question.guard.GuardProperties;
 import io.github.rennaraujo.sage.question.llm.FakeLanguageModel;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelEvent;
@@ -32,6 +35,8 @@ import io.github.rennaraujo.sage.search.Retriever;
 import io.github.rennaraujo.sage.search.ScoredChunk;
 import io.github.rennaraujo.sage.search.SearchFilter;
 import io.github.rennaraujo.sage.search.SearchIndex;
+import io.github.rennaraujo.sage.upload.SecretScanner;
+import io.github.rennaraujo.sage.web.WebFallback;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Clock;
@@ -267,6 +272,93 @@ class AnswerServiceTest {
 
         assertThat(sink.events).containsSubsequence("text:Use toList() [1].", "done");
         assertThat(sink.metadata.get(1).droppedSentences()).isEqualTo(2);
+    }
+
+    @Test
+    void sentenceNotGroundedByTheCheckerIsDroppedAndCounted() {
+        when(retriever.retrieve(anyString(), any()))
+                .thenReturn(List.of(chunk("publico/java/21/streams.md", "Streams", 0.9, true)));
+        List<List<String>> seen = new java.util.concurrent.CopyOnWriteArrayList<>();
+        GroundednessChecker checker = (sentence, evidence) -> {
+            seen.add(evidence);
+            return sentence.contains("toList");
+        };
+        FakeLanguageModel model = new FakeLanguageModel("Use toList() [1]. Isto não está nos trechos [1].");
+
+        serviceWith(model, checker).answer(new AnswerRequest("toList no java 21", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.events)
+                .contains("text:Use toList() [1].")
+                .doesNotContain("text:Isto não está nos trechos [1].");
+        assertThat(sink.metadata.get(1).droppedSentences()).isEqualTo(1);
+        assertThat(seen).hasSize(2).allSatisfy(e -> assertThat(e).hasSize(1));
+        assertThat(seen.get(0).get(0)).startsWith("Streams" + (char) 10);
+    }
+
+    @Test
+    void secretInTheModelOutputIsRedactedAndCountedInDoneAndAudit() {
+        when(retriever.retrieve(anyString(), any()))
+                .thenReturn(List.of(chunk("publico/java/21/streams.md", "Streams", 0.9, true)));
+        FakeLanguageModel model = new FakeLanguageModel("A chave é AKIAABCDEFGHIJKLMNOP [1].");
+
+        serviceWith(model, (sentence, evidence) -> true)
+                .answer(new AnswerRequest("toList no java 21", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.events)
+                .contains("text:[conteúdo removido: possível segredo]")
+                .noneMatch(e -> e.contains("AKIA"));
+        assertThat(sink.metadata.get(1).redactedSecrets()).isEqualTo(1);
+        assertThat(sink.metadata.get(1).droppedSentences()).isZero();
+        assertThat(auditEvents(2).get(1).details()).containsEntry("redactedSecrets", "1");
+    }
+
+    @Test
+    @Timeout(15)
+    void slowGroundingDuringTheStreamStillEndsAtTheModelDeadline() throws Exception {
+        when(retriever.retrieve(anyString(), any()))
+                .thenReturn(List.of(chunk("publico/java/21/streams.md", "Streams", 0.9, true)));
+        AtomicInteger started = new AtomicInteger();
+        GroundednessChecker slow = (sentence, evidence) -> {
+            started.incrementAndGet();
+            sleepQuietly(1000);
+            return true;
+        };
+        // Várias frases chegam de uma vez; cada verificação leva 1 s, o prazo total é de 400 ms.
+        LanguageModel model = (tier, prompt) -> Flux.just(
+                new ModelEvent.TextDelta("Primeira [1]. Segunda [1]. Terceira [1]. "), new ModelEvent.Completed());
+        ModelProperties fast = new ModelProperties("haiku-id", "sonnet-id", 1500, 0.0, Duration.ofMillis(400));
+        long start = System.nanoTime();
+
+        assertThatThrownBy(() -> serviceWith(model, slow, fast, Duration.ofSeconds(5))
+                        .answer(new AnswerRequest("toList no java 21", Optional.empty(), ACTOR), sink))
+                .isInstanceOf(AnswerAbortedException.class);
+
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(2));
+        Thread.sleep(3000);
+        assertThat(sink.events).noneMatch(e -> e.startsWith("text:Primeira")).doesNotContain("done");
+        assertThat(started.get()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    @Timeout(15)
+    void slowGroundingInFinishIsCheckedAgainstTheDeadlineBeforeEmitting() {
+        when(retriever.retrieve(anyString(), any()))
+                .thenReturn(List.of(chunk("publico/java/21/streams.md", "Streams", 0.9, true)));
+        GroundednessChecker slow = (sentence, evidence) -> {
+            sleepQuietly(700);
+            return true;
+        };
+        // Sem ponto final com espaço depois: a frase só fecha no finish(), que é onde a verificação demora.
+        LanguageModel model =
+                (tier, prompt) -> Flux.just(new ModelEvent.TextDelta("Frase final [1]."), new ModelEvent.Completed());
+        ModelProperties fast = new ModelProperties("haiku-id", "sonnet-id", 1500, 0.0, Duration.ofMillis(300));
+
+        assertThatThrownBy(() -> serviceWith(model, slow, fast, Duration.ofSeconds(5))
+                        .answer(new AnswerRequest("toList no java 21", Optional.empty(), ACTOR), sink))
+                .isInstanceOf(AnswerAbortedException.class);
+
+        assertThat(sink.events).noneMatch(e -> e.startsWith("text:Frase final")).doesNotContain("done");
+        assertThat(auditEvents(2).get(1).details()).containsEntry("outcome", "interrupted");
     }
 
     @Test
@@ -542,6 +634,55 @@ class AnswerServiceTest {
                 FakeCaches.conversations(),
                 gaps,
                 CLOCK);
+    }
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private AnswerService serviceWith(
+            LanguageModel model, GroundednessChecker checker, ModelProperties models, Duration nliTimeout) {
+        return new AnswerService(
+                analyzer,
+                catalog,
+                retriever,
+                index,
+                new RouteDecider(index, RETRIEVAL, true),
+                new PromptBuilder(),
+                new FlowContextExpander(index, new FlowProperties(12000, 3, 24000)),
+                model,
+                audit,
+                models,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
+                gaps,
+                CLOCK,
+                WebFallback.NONE,
+                new AnswerGuardFactory(checker, new SecretScanner(), new GuardProperties(0.5, 256, false, nliTimeout)));
+    }
+
+    private AnswerService serviceWith(LanguageModel model, GroundednessChecker checker) {
+        return new AnswerService(
+                analyzer,
+                catalog,
+                retriever,
+                index,
+                new RouteDecider(index, RETRIEVAL, true),
+                new PromptBuilder(),
+                new FlowContextExpander(index, new FlowProperties(12000, 3, 24000)),
+                model,
+                audit,
+                MODELS,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
+                gaps,
+                CLOCK,
+                WebFallback.NONE,
+                new AnswerGuardFactory(checker, new SecretScanner(), new GuardProperties(0.5, 256, false)));
     }
 
     private AnswerService service(LanguageModel model) {

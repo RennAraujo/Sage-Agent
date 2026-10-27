@@ -12,6 +12,7 @@ import java.util.regex.Pattern;
 final class CitationValidator {
 
     private static final Pattern CITATION = Pattern.compile("\\[(\\d{1,4})]");
+    private static final Pattern CITATION_WITH_SPACE = Pattern.compile("\\s*\\[\\d{1,4}]");
     private static final Pattern INLINE_CODE = Pattern.compile("`[^`]*`");
 
     private final int contextSize;
@@ -23,6 +24,22 @@ final class CitationValidator {
     boolean valid(String sentence) {
         List<Integer> cited = citations(sentence);
         return !cited.isEmpty() && cited.stream().allMatch(n -> n >= 1 && n <= contextSize);
+    }
+
+    /** A frase sem os marcadores {@code [n]} (e o espaço antes deles); colchetes em código inline ficam como estão. */
+    static String withoutCitations(String sentence) {
+        StringBuilder out = new StringBuilder();
+        Matcher code = INLINE_CODE.matcher(sentence);
+        int from = 0;
+        while (code.find()) {
+            out.append(CITATION_WITH_SPACE
+                    .matcher(sentence.substring(from, code.start()))
+                    .replaceAll(""));
+            out.append(code.group());
+            from = code.end();
+        }
+        out.append(CITATION_WITH_SPACE.matcher(sentence.substring(from)).replaceAll(""));
+        return out.toString().strip();
     }
 
     static List<Integer> citations(String sentence) {

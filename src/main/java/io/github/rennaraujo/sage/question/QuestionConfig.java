@@ -3,6 +3,7 @@ package io.github.rennaraujo.sage.question;
 import com.github.benmanes.caffeine.cache.Ticker;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.gap.GapRegistry;
+import io.github.rennaraujo.sage.question.guard.AnswerGuardFactory;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelProperties;
 import io.github.rennaraujo.sage.question.llm.PromptBuilder;
@@ -65,7 +66,8 @@ class QuestionConfig {
             AnswerCache cache,
             ConversationStore conversations,
             GapRegistry gaps,
-            WebFallback web) {
+            WebFallback web,
+            AnswerGuardFactory guards) {
         return new AnswerService(
                 analyzer,
                 catalog,
@@ -81,6 +83,7 @@ class QuestionConfig {
                 conversations,
                 gaps,
                 Clock.systemUTC(),
-                web);
+                web,
+                guards);
     }
 }

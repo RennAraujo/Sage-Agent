@@ -126,6 +126,7 @@ class AnswerCacheTest {
                         Optional.empty(),
                         false,
                         0,
+                        0,
                         Map.of(),
                         List.of()));
     }

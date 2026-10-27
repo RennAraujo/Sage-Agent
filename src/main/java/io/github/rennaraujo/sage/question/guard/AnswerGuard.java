@@ -1,9 +1,11 @@
 package io.github.rennaraujo.sage.question.guard;
 
 import io.github.rennaraujo.sage.question.llm.PromptBuilder;
+import io.github.rennaraujo.sage.upload.SecretScanner;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -33,7 +35,13 @@ import java.util.regex.Pattern;
  * diz o que a documentação não traz, nunca que o recurso não existe. Eventos que a documentação afirma ("foi removido
  * no Java 11 [1]", "deixou de existir", "foi descontinuado", "foi introduzido") não são afirmação de ausência e passam
  * como qualquer frase citada. Frases de comportamento ("lança NoSuchFileException se o arquivo não existe [1]", "o
- * record não possui setters [1]") não nomeiam versão e passam em qualquer rota; fora de comparação a regra não roda.
+ * record não possui setters [1]") não nomeiam versão e passam em qualquer rota; fora de comparação a regra não roda. *
+ * <p>Fundamentação: a frase que passou nas regras acima ainda é conferida por um {@link GroundednessChecker} (NLI),
+ * sem os marcadores {@code [n]} e contra só os trechos que ela cita; não sustentada, é descartada e contada. Blocos de
+ * código e os textos fixos do código (não cobre, fluxo não detalhado e o molde de ausência da comparação) não passam
+ * por essa checagem: o NLI não consegue sustentar ausência, e os fixos não são do modelo. Segredos: todo segmento
+ * emitido (frase ou bloco) passa pelo {@link SecretScanner}; se achar algo, o segmento vira o texto de
+ * {@link #REDACTED} e entra em {@link #redacted()}, sem nunca registrar o valor.
  */
 public final class AnswerGuard {
 
@@ -52,9 +60,19 @@ public final class AnswerGuard {
     private static final Pattern ABSENCE_TEMPLATE_SHAPE =
             Pattern.compile("^a documentacao d[oa] \\S.* disponivel nao menciona (\\S.*)$");
 
+    /** Tamanho máximo do assunto do molde de ausência para ele dispensar o NLI. */
+    private static final int MAX_TEMPLATE_SUBJECT = 80;
+
+    /** Sinais de uma segunda oração ou frase dentro do assunto do molde de ausência. */
+    private static final Pattern SECOND_CLAUSE =
+            Pattern.compile("[;:]|,\\s*(?:mas|porem|e|ou|pois|que|enquanto|embora)\\b|\\b(?:mas|porem)\\b|\\.\\s+\\S");
+
     private static final String MERMAID_TAG = "mermaid";
 
     private static final int FENCE_LENGTH = 3;
+
+    /** Texto que substitui um segmento onde o {@link SecretScanner} achou uma credencial. */
+    public static final String REDACTED = "[conteúdo removido: possível segredo]";
 
     private final SentenceSplitter splitter = new SentenceSplitter();
     /** Frase que nomeia uma linguagem pública ou uma versão; roda sobre o texto sem acento e em minúsculas. */
@@ -62,14 +80,21 @@ public final class AnswerGuard {
             "\\b(?:java|jdk|kotlin|spring(?:\\s+(?:boot|framework|security))?)\\b" + "|\\bvers(?:ao|oes|ion)\\s*\\d");
 
     private final CitationValidator validator;
+    private final List<String> evidence;
+    private final GroundednessChecker checker;
+    private final SecretScanner scanner;
     private final boolean comparison;
     private final boolean flow;
     private final SortedSet<Integer> cited = new TreeSet<>();
     private int accepted;
     private int dropped;
+    private int redacted;
+    private long nliNanos;
+    private int nliChecks;
     private boolean previousAccepted;
     private boolean flowNotDetailed;
 
+    /** Só citações e segredos, sem verificação de fundamentação (o conteúdo dos trechos não é conhecido). */
     public AnswerGuard(int contextSize) {
         this(contextSize, false);
     }
@@ -81,9 +106,31 @@ public final class AnswerGuard {
 
     /** {@code flow} libera a frase fixa de fluxo não detalhado, que só faz sentido na rota de fluxo. */
     public AnswerGuard(int contextSize, boolean comparison, boolean flow) {
+        this(
+                Collections.nCopies(contextSize, ""),
+                comparison,
+                flow,
+                new PassThroughGroundednessChecker(),
+                new SecretScanner());
+    }
+
+    /**
+     * @param evidence o texto de cada trecho enviado ao modelo, na ordem das citações ({@code [1]} é o índice 0)
+     * @param checker decide se os trechos citados sustentam a frase
+     * @param scanner procura credenciais em tudo que vai ser emitido
+     */
+    public AnswerGuard(
+            List<String> evidence,
+            boolean comparison,
+            boolean flow,
+            GroundednessChecker checker,
+            SecretScanner scanner) {
         this.flow = flow;
-        this.validator = new CitationValidator(contextSize);
+        this.evidence = List.copyOf(evidence);
+        this.validator = new CitationValidator(evidence.size());
         this.comparison = comparison;
+        this.checker = checker;
+        this.scanner = scanner;
     }
 
     /** Recebe um pedaço do texto do modelo e devolve as frases que ficaram completas e foram aprovadas. */
@@ -109,6 +156,21 @@ public final class AnswerGuard {
         return dropped;
     }
 
+    /** Tempo total gasto nas verificações de fundamentação desta resposta, em milissegundos. */
+    public long nliMillis() {
+        return nliNanos / 1_000_000;
+    }
+
+    /** Quantas frases foram enviadas ao verificador de fundamentação. */
+    public int nliChecks() {
+        return nliChecks;
+    }
+
+    /** Quantos segmentos emitidos foram trocados por {@link #REDACTED} por conterem uma credencial. */
+    public int redacted() {
+        return redacted;
+    }
+
     /** Índices citados pelas frases aprovadas até agora, em ordem crescente. */
     public SortedSet<Integer> cited() {
         return Collections.unmodifiableSortedSet(cited);
@@ -124,7 +186,12 @@ public final class AnswerGuard {
         for (SentenceSplitter.Segment segment : segments) {
             String text = segment.text();
             if (segment.code()) {
-                take(out, text, previousAccepted && segment.closed() && !disguisedProse(text) && !unsafeMermaid(text));
+                boolean ok = previousAccepted && segment.closed() && !disguisedProse(text) && !unsafeMermaid(text);
+                if (ok && hasSecret(text)) {
+                    redact(out);
+                } else {
+                    take(out, text, ok);
+                }
                 previousAccepted = false;
             } else if (flow && PromptBuilder.FLOW_NOT_DETAILED.equals(text)) {
                 // Mesma ideia do "não cobre": é a resposta prevista para fluxo que a documentação não detalha.
@@ -135,6 +202,13 @@ public final class AnswerGuard {
                 previousAccepted = false;
             } else {
                 boolean ok = validator.valid(text) && !(comparison && unsupportedAbsence(text));
+                ok = ok && grounded(text);
+                if (ok && hasSecret(text)) {
+                    // Só o que seria mostrado é redigido; o que já seria descartado continua sendo descartado.
+                    redact(out);
+                    previousAccepted = false;
+                    continue;
+                }
                 if (ok) {
                     cited.addAll(CitationValidator.citations(text));
                 }
@@ -145,6 +219,34 @@ public final class AnswerGuard {
         return out;
     }
 
+    /** Só os trechos que a frase cita, na ordem em que aparecem, contra a frase sem os marcadores. */
+    private boolean grounded(String sentence) {
+        if (comparison && isAbsenceTemplate(sentence)) {
+            return true;
+        }
+        List<String> cites = new ArrayList<>();
+        for (int n : new LinkedHashSet<>(CitationValidator.citations(sentence))) {
+            cites.add(evidence.get(n - 1));
+        }
+        long start = System.nanoTime();
+        try {
+            return checker.isSupported(CitationValidator.withoutCitations(sentence), cites);
+        } finally {
+            nliNanos += System.nanoTime() - start;
+            nliChecks++;
+        }
+    }
+
+    private boolean hasSecret(String text) {
+        return !scanner.scan(text).isEmpty();
+    }
+
+    private void redact(List<String> out) {
+        out.add(REDACTED);
+        accepted++;
+        redacted++;
+    }
+
     private void take(List<String> out, String text, boolean ok) {
         if (ok) {
             out.add(text);
@@ -152,6 +254,22 @@ public final class AnswerGuard {
         } else {
             dropped++;
         }
+    }
+
+    /** O molde de ausência ({@link PromptBuilder#ABSENCE_TEMPLATE}): texto fixo, que o NLI não sustentaria. */
+    static boolean isAbsenceTemplate(String sentence) {
+        String folded = Normalizer.normalize(sentence.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .strip();
+        Matcher template = ABSENCE_TEMPLATE_SHAPE.matcher(CitationValidator.withoutCitations(folded));
+        if (!template.matches()) {
+            return false;
+        }
+        // Só o assunto curto e de uma oração: "..., mas records são mutáveis" é uma segunda afirmação, que o NLI
+        // confere.
+        String subject = template.group(1);
+        return subject.length() <= MAX_TEMPLATE_SUBJECT
+                && !SECOND_CLAUSE.matcher(subject).find();
     }
 
     /** Bloco mermaid fora da lista de permissão ({@link MermaidAllowList}): a interface pode renderizá-lo. */

@@ -19,8 +19,8 @@ RUN set -eu; \
     cp native/lib/$djl/cpu/libtokenizers.so /native/; \
     chmod 755 /native && chmod 644 /native/*
 
-# Modelos (embeddings e reranker): baixados de uma revisão fixa e conferidos contra o sha256 de models.lock. Se o hash divergir,
-# o build falha aqui. Fica em estágio próprio para o cache do Docker não rebaixar 960 MB a cada mudança no código.
+# Modelos (embeddings, reranker e NLI): baixados de uma revisão fixa e conferidos contra o sha256 de models.lock. Se o hash divergir,
+# o build falha aqui. Fica em estágio próprio para o cache do Docker não rebaixar 2 GB a cada mudança no código.
 FROM maven:3.9-eclipse-temurin-25 AS models
 WORKDIR /models-build
 COPY models.lock ./
@@ -37,6 +37,8 @@ RUN mkdir -p /app/data && chown 10001:10001 /app/data
 # tokenizer de RUST_LIBRARY_PATH. Assim /tmp continua noexec.
 COPY --from=build /native /app/native
 ENV SAGE_MODELS_DIR=/app/models
+# A imagem sempre traz o modelo de NLI; se ele sumir, melhor não subir do que responder sem verificar fundamentação.
+ENV SAGE_GUARD_REQUIRE_NLI=true
 ENV RUST_LIBRARY_PATH=/app/native/libtokenizers.so
 ENV DJL_CACHE_DIR=/tmp/djl
 USER 10001:10001

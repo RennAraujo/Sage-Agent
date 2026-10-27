@@ -24,7 +24,7 @@ A busca híbrida usa o `multilingual-e5-small` (470 MB), que não vai para o git
 .\scripts\download-models.ps1     # ou scripts/download-models.sh
 ```
 
-Os arquivos (embeddings e reranker, uns 960 MB no total) vão para `models/` (ou para `sage.models.dir`) e são conferidos contra o sha256 de `models.lock`. Sem eles tudo continua funcionando, só que a busca é apenas BM25, o score de relevância vira uma cobertura lexical aproximada em vez da nota do reranker, e o log avisa na subida. Detalhes em [docs/arquitetura.md](docs/arquitetura.md#busca-híbrida) e [sobre o reranker](docs/arquitetura.md#reranker-e-o-score-que-decide-o-caminho).
+Os arquivos (embeddings, reranker e verificação de fundamentação, uns 2,1 GB no total) vão para `models/` (ou para `sage.models.dir`) e são conferidos contra o sha256 de `models.lock`. Sem eles tudo continua funcionando, só que a busca é apenas BM25, o score de relevância vira uma cobertura lexical aproximada em vez da nota do reranker, a verificação de fundamentação das respostas fica desligada (o guard valida só citações e segredos), e o log avisa na subida. Detalhes em [docs/arquitetura.md](docs/arquitetura.md#busca-híbrida) e [sobre o reranker](docs/arquitetura.md#reranker-e-o-score-que-decide-o-caminho).
 
 Para a imagem Docker (ela baixa e confere o modelo no build):
 

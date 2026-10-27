@@ -195,6 +195,7 @@ class QuestionController {
         m.versionUsed().ifPresent(v -> out.put("versaoUsada", v));
         out.put("fontesNaoRevisadas", m.unreviewedSources());
         out.put("frasesDescartadas", m.droppedSentences());
+        out.put("segredosRemovidos", m.redactedSecrets());
         out.put("temposMs", m.timingsMillis());
         return out;
     }

@@ -74,3 +74,28 @@ Registro das escolhas que mais pesaram no desenho, com o contexto em que foram f
 **Escolha.** Uma busca por versão, e mais uma para a documentação interna numa pergunta mista. Um teto próprio, `sage.retrieval.comparison-max-chunks` (8), é dividido entre os grupos (4 e 4 com duas versões; 3, 3 e 2 com a interna), cada grupo fica só com o que passa no limiar de relevância, e a sobra de um grupo vai para os que encheram a sua parte. O prompt agrupa os trechos por versão, com `versao` no delimitador, e pede a resposta na ordem das versões. Quando os trechos de uma versão não falam do assunto, o modelo deve escrever no molde "A documentação do Java 8 disponível não menciona records." e citar esses trechos, nunca "o Java 8 não tem isso": a ausência no acervo não prova ausência na linguagem. Nas comparações, o guard descarta qualquer outra afirmação de ausência que nomeie versão ou linguagem. Versão fora do acervo é dita pelo código logo no começo; versão sem trecho relevante, pelo código, na posição dela na resposta. A comparação só deixa de chamar modelo quando nenhuma das versões pedidas existe.
 
 **Consequência.** Uma comparação de duas versões custa duas buscas e dois reranks em vez de um (cerca de duas vezes o tempo de busca, algumas centenas de milissegundos com o reranker ligado), três com a interna, e uma a mais quando há sobra para redistribuir. O contexto da comparação vai até 8 trechos, contra 5 da pergunta comum, o que encarece o prompt do Sonnet. Com o piso de 2 por grupo, cabem no máximo 4 grupos: uma pergunta com seis versões compara as quatro primeiras e diz isso, em vez de diluir o contexto em um trecho por versão. Comparação entre linguagens diferentes ainda usa a busca única. O guard de ausência mira só afirmações de inexistência ou indisponibilidade ("não existe", "não está disponível", "não há suporte", "inexistente", "não possui"). Eventos que a documentação afirma, como "foi removido no Java 11 [1]" ou "foi descontinuado", passam como qualquer frase citada: são fatos lidos, não silêncio interpretado. Uma primeira versão barrava também "foi removido" e derrubava justamente as respostas mais úteis de uma pergunta de disponibilidade. A regra também só vale nas comparações e só para frases que nomeiam versão ou linguagem: "lança exceção se o arquivo não existe" é comportamento, não afirmação sobre o que uma versão tem.
+
+## Verificação de fundamentação com NLI
+
+**Contexto.** Marcadores de citação não provam que a frase é sustentada pelo trecho. Precisamos decidir, frase a frase, se um trecho implica o que a resposta afirma, em português sobre documentação em inglês, na CPU e sem mandar texto para fora.
+
+**Opções.**
+
+- Um LLM como juiz (Bedrock): contraria o requisito de não enviar o acervo para fora e acrescenta uma chamada por frase.
+- `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli`: 6 camadas, 430 MB, ONNX oficial, MIT, rápido (cerca de 20 ms por par curto). Foi o primeiro candidato, por casar com o exemplo do plano.
+- `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`: modelo base, 1,1 GB em fp32, ONNX oficial, MIT, treinado em XNLI mais MNLI e outros conjuntos.
+- O mesmo mDeBERTa quantizado (`model_quantized.onnx`, 340 MB).
+
+**Testes.** Em 29 pares rotulados (`nli-pairs.tsv`), no limiar 0,5, o MiniLM L6 concorda com 20 (69 %) e o mDeBERTa fp32 com todos (100 %). Com a premissa "Stream.toList() returns an unmodifiable List." e a hipótese em português:
+
+| Hipótese | MiniLM L6 | mDeBERTa fp32 | mDeBERTa int8 |
+| --- | --- | --- | --- |
+| "O método toList retorna uma lista imutável." | 0,76 | 0,999 | 0,88 |
+| "O método toList retorna uma lista mutável." | 0,84 | 0,016 | 0,39 |
+| "O Spring Boot usa Tomcat como servidor padrão." | 0,007 | 0,003 | 0,06 |
+
+O MiniLM dá nota maior à contradição do que ao par correto: ele reage ao vocabulário em comum, não à negação, e em pares como "can be modified" contra "unmodifiable" também errou. Aprovar "lista mutável" é justamente o erro que o filtro existe para pegar. O int8 separa, mas com margem pequena (0,88 contra 0,39) e errou outros pares de negação, o que deixaria o limiar de 0,5 instável.
+
+**Escolha.** `mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` em fp32, revisão `b5113eb3` fixada no `models.lock`, com sha256 de `nli.onnx`, `nli-tokenizer.json` e `nli-config.json` conferido no download e no build da imagem. Os rótulos são lidos do `id2label` do config, não supostos.
+
+**Consequência.** A imagem cresce 1,1 GB (a soma dos modelos passa de 2 GB). Em memória, os três modelos juntos levam o processo a cerca de 3,7 GB residentes (o NLI sozinho, uns 1,5 GB), então o contêiner precisa de 4 GB ou mais. A latência é de cerca de 200 ms por frase com dois trechos citados e de 1 a 1,6 s no pior caso (5 trechos no teto); numa resposta de 8 frases isso dá ~1,7 s no caso típico e 8 a 13 s no pior (números em [seguranca.md](seguranca.md#custo-de-latência)). Pagamos isso porque um verificador que aprova a contradição é pior do que nenhum: dá falsa sensação de segurança. Se o custo incomodar, o caminho é reduzir `sage.guard.nli-max-tokens` ou verificar só frases com afirmações técnicas, antes de trocar por um modelo menor. Sem os arquivos, a aplicação sobe com um verificador que aprova toda frase com trecho citado e o guard fica só com citações e segredos; em produção, `sage.guard.require-nli=true` (padrão da imagem Docker) impede isso e faz a partida falhar. O código de sessão, tokenizer e truncamento é um só (`OnnxPairModel`), usado pelo reranker e pelo NLI.

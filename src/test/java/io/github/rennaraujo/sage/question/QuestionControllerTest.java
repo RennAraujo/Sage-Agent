@@ -150,6 +150,26 @@ class QuestionControllerTest {
     }
 
     @Test
+    void payloadReportsRedactedSecrets() {
+        AnswerMetadata meta = new AnswerMetadata(
+                "c-1",
+                Route.FAST_MODEL,
+                Optional.empty(),
+                0.9,
+                List.of(),
+                Optional.empty(),
+                false,
+                1,
+                2,
+                java.util.Map.of(),
+                List.of());
+
+        assertThat(QuestionController.payload(meta))
+                .containsEntry("frasesDescartadas", 1)
+                .containsEntry("segredosRemovidos", 2);
+    }
+
+    @Test
     void donePayloadMarksUnknownVersionWithNull() {
         AnswerMetadata meta = new AnswerMetadata(
                 "c-1",
@@ -159,6 +179,7 @@ class QuestionControllerTest {
                 List.of(),
                 Optional.empty(),
                 false,
+                0,
                 0,
                 java.util.Map.of(),
                 List.of(new ConsultedSource("java", "Java", Optional.empty(), Source.PUBLIC)));

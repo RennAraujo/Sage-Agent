@@ -1,0 +1,31 @@
+# premissa<TAB>hipótese<TAB>sustentada (yes/no). Premissas no estilo da documentação (en), hipóteses como as respostas (pt-BR e en).
+# Usado pelo OnnxNliCheckerTest para medir a concordância do modelo no limiar 0.5 e para comparar modelos candidatos.
+Stream.toList() returns an unmodifiable List.	O método toList retorna uma lista imutável.	yes
+Stream.toList() returns an unmodifiable List.	O método toList retorna uma lista mutável.	no
+Stream.toList() returns an unmodifiable List.	The list returned by toList cannot be modified.	yes
+Stream.toList() returns an unmodifiable List.	The list returned by toList can be modified.	no
+Stream.toList() returns an unmodifiable List.	O Spring Boot usa Tomcat como servidor padrão.	no
+Optional.isEmpty() was added in Java 11 and returns true if no value is present.	O método isEmpty de Optional existe desde o Java 11.	yes
+Optional.isEmpty() was added in Java 11 and returns true if no value is present.	O método isEmpty de Optional foi adicionado no Java 8.	no
+Optional.isEmpty() was added in Java 11 and returns true if no value is present.	isEmpty retorna true quando não há valor presente.	yes
+Optional.isEmpty() was added in Java 11 and returns true if no value is present.	isEmpty retorna true quando o valor está presente.	no
+Records were finalized in Java 16 as a standard language feature.	Os records se tornaram um recurso padrão da linguagem no Java 16.	yes
+Records were finalized in Java 16 as a standard language feature.	Os records ainda são um recurso experimental no Java 16.	no
+The default value of server.port in Spring Boot is 8080.	A porta padrão do servidor no Spring Boot é 8080.	yes
+The default value of server.port in Spring Boot is 8080.	A porta padrão do servidor no Spring Boot é 9090.	no
+HashMap is not synchronized and permits null keys and values.	HashMap permite chaves nulas.	yes
+HashMap is not synchronized and permits null keys and values.	HashMap não permite chaves nulas.	no
+HashMap is not synchronized and permits null keys and values.	HashMap é sincronizado e seguro para uso concorrente.	no
+String.strip() removes leading and trailing white space using Character.isWhitespace.	O método strip remove espaços no início e no fim da string.	yes
+String.strip() removes leading and trailing white space using Character.isWhitespace.	O método strip remove todos os caracteres da string.	no
+Virtual threads were added as a final feature in Java 21.	Threads virtuais são um recurso definitivo a partir do Java 21.	yes
+Virtual threads were added as a final feature in Java 21.	Threads virtuais foram removidas no Java 21.	no
+Files.readString reads all content from a file into a String, decoding with UTF-8 by default.	Files.readString lê o conteúdo inteiro de um arquivo como String.	yes
+Files.readString reads all content from a file into a String, decoding with UTF-8 by default.	Files.readString devolve uma lista com as linhas do arquivo.	no
+The @Transactional annotation rolls back on unchecked exceptions by default.	Por padrão, @Transactional faz rollback em exceções não verificadas.	yes
+The @Transactional annotation rolls back on unchecked exceptions by default.	Por padrão, @Transactional nunca faz rollback.	no
+The maximum length of a Java array is Integer.MAX_VALUE minus a small constant.	O tamanho de um array em Java é limitado por um valor próximo de Integer.MAX_VALUE.	yes
+List.of() returns an immutable list and does not allow null elements.	List.of aceita elementos nulos.	no
+List.of() returns an immutable list and does not allow null elements.	List.of não aceita elementos nulos.	yes
+Set the property spring.threads.virtual.enabled to true to run on virtual threads.	Para usar threads virtuais, defina spring.threads.virtual.enabled como true.	yes
+Set the property spring.threads.virtual.enabled to true to run on virtual threads.	O Kubernetes reinicia o pod quando o healthcheck falha.	no

@@ -132,7 +132,7 @@ O que o 256 custa em qualidade: um trecho de 1500 caracteres tem uns 330 tokens,
 
 ### Memória do contêiner
 
-Com os dois modelos carregados, os pesos fp32 ocupam uns 0,95 GB (2 × 470 MB) fora da heap, mais as áreas de trabalho do ONNX Runtime e os tokenizers. Num teste com só o reranker, o processo chegou a 1,3 GB de memória residente (medida grosseira, com a JVM de teste); somando o segundo modelo e a heap do índice, a estimativa é de uns 2,3 GB para um acervo pequeno. O mínimo razoável para o contêiner é 3 GB, e mais se o índice crescer (veja a estimativa de RAM do índice acima). Com menos que isso o kernel mata o processo por falta de memória durante o primeiro lote de reranking, não na subida.
+Com os dois modelos carregados, os pesos fp32 ocupam uns 0,95 GB (2 × 470 MB) fora da heap, mais as áreas de trabalho do ONNX Runtime e os tokenizers. Num teste com só o reranker, o processo chegou a 1,3 GB de memória residente (medida grosseira, com a JVM de teste); somando o segundo modelo e a heap do índice, a estimativa é de uns 2,3 GB para um acervo pequeno. O mínimo razoável para o contêiner só com esses dois modelos é 3 GB (com o modelo de NLI do guard são 4 GB, veja [seguranca.md](seguranca.md#memória)), e mais se o índice crescer (veja a estimativa de RAM do índice acima). Com menos que isso o kernel mata o processo por falta de memória durante o primeiro lote de reranking, não na subida.
 
 ### Sem o modelo: o score de fallback
 
