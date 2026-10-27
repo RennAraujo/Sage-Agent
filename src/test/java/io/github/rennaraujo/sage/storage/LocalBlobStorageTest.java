@@ -3,27 +3,33 @@ package io.github.rennaraujo.sage.storage;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class LocalBlobStorageTest {
 
-    @TempDir
-    Path root;
+    private Path root;
 
     private LocalBlobStorage storage;
 
     @BeforeEach
     void setUp() {
+        root = ScratchDirs.create("sage-blobs");
         storage = new LocalBlobStorage(root);
+    }
+
+    @AfterEach
+    void tearDown() {
+        ScratchDirs.delete(root);
     }
 
     @Test

@@ -10,6 +10,7 @@ import io.github.rennaraujo.sage.document.DocumentMetadata;
 import io.github.rennaraujo.sage.document.EncryptedDocumentStore;
 import io.github.rennaraujo.sage.document.FrontmatterParser;
 import io.github.rennaraujo.sage.document.Source;
+import io.github.rennaraujo.sage.search.embedding.EmbeddingModel;
 import io.github.rennaraujo.sage.storage.LocalBlobStorage;
 import java.io.IOException;
 import java.net.URI;
@@ -99,6 +100,85 @@ class LuceneSearchIndexTest {
         index.upsert(javaDoc("25", "# Coleções\nA coleção imutável não aceita alterações.\n"));
 
         assertThat(index.search("COLECAO", anything(), LIMIT)).hasSize(1);
+    }
+
+    @Test
+    void vectorFindsCrossLanguageChunk() {
+        String english = "# Sorting\nHow to sort a List in Java with a Comparator.\n";
+        String other = "# TLS\nConfigure TLS certificate on the server.\n";
+        index.upsert(doc("publico/java/25/sort.md", "java", "25", english));
+        index.upsert(doc("publico/java/25/tls.md", "java", "25", other));
+        assertThat(index.search("como ordenar lista", anything(), LIMIT)).isEmpty();
+
+        try (LuceneSearchIndex hybrid = hybridIndex(new FakeEmbeddingModel())) {
+            hybrid.upsert(doc("publico/java/25/sort.md", "java", "25", english));
+            hybrid.upsert(doc("publico/java/25/tls.md", "java", "25", other));
+
+            List<Chunk> found = hybrid.search("como ordenar lista", anything(), LIMIT);
+
+            assertThat(found).isNotEmpty();
+            assertThat(found.get(0).text()).contains("sort a List");
+        }
+    }
+
+    @Test
+    void hybridSearchRespectsFilterOnTheVectorBranch() {
+        try (LuceneSearchIndex hybrid = hybridIndex(new FakeEmbeddingModel())) {
+            hybrid.upsert(doc("publico/java/25/sort.md", "java", "25", "# Sorting\nHow to sort a List.\n"));
+            hybrid.upsert(doc("publico/java/21/sort.md", "java", "21", "# Sorting\nHow to sort a List.\n"));
+            hybrid.upsert(doc("interno/guia/sort.md", "pt", null, "# Ordenar\nComo ordenar uma lista.\n"));
+
+            SearchFilter v25 = new SearchFilter(Set.of(Source.PUBLIC), Optional.of("java"), List.of("25"));
+            SearchFilter internal = new SearchFilter(Set.of(Source.INTERNAL), Optional.empty(), List.of());
+
+            assertThat(hybrid.search("ordenar lista", v25, LIMIT))
+                    .singleElement()
+                    .satisfies(c -> assertThat(c.version()).contains("25"));
+            assertThat(hybrid.search("ordenar lista", internal, LIMIT))
+                    .singleElement()
+                    .satisfies(c -> assertThat(c.source()).isEqualTo(Source.INTERNAL));
+        }
+    }
+
+    @Test
+    void upsertReplacesVectorsOfThePreviousVersion() {
+        try (LuceneSearchIndex hybrid = hybridIndex(new FakeEmbeddingModel())) {
+            hybrid.upsert(doc("publico/java/25/x.md", "java", "25", "# Sorting\nHow to sort a List.\n"));
+            hybrid.upsert(doc("publico/java/25/x.md", "java", "25", "# TLS\nConfigure TLS certificate.\n"));
+
+            List<Chunk> found = hybrid.search("ordenar lista", anything(), LIMIT);
+
+            assertThat(found).allSatisfy(c -> assertThat(c.text()).doesNotContain("sort a List"));
+        }
+    }
+
+    @Test
+    void embeddingFailureDegradesToBm25() {
+        EmbeddingModel broken = new EmbeddingModel() {
+            @Override
+            public float[] embedQuery(String text) {
+                throw new IllegalStateException("sem modelo");
+            }
+
+            @Override
+            public float[] embedPassage(String text) {
+                throw new IllegalStateException("sem modelo");
+            }
+
+            @Override
+            public int dimensions() {
+                return 5;
+            }
+        };
+        try (LuceneSearchIndex hybrid = hybridIndex(broken)) {
+            hybrid.upsert(javaDoc("25", "# Streams\nStream.toList() devolve lista.\n"));
+
+            assertThat(hybrid.search("Stream.toList", anything(), LIMIT)).hasSize(1);
+        }
+    }
+
+    private static LuceneSearchIndex hybridIndex(EmbeddingModel model) {
+        return new LuceneSearchIndex(new RetrievalProperties(1500, 30), new IndexReadiness(), Optional.of(model));
     }
 
     @Test

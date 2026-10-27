@@ -8,6 +8,7 @@ import io.github.rennaraujo.sage.crypto.EnvelopeCipher;
 import io.github.rennaraujo.sage.crypto.LocalKeyProvider;
 import io.github.rennaraujo.sage.storage.BlobStorage;
 import io.github.rennaraujo.sage.storage.LocalBlobStorage;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -22,10 +23,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
@@ -36,8 +37,7 @@ class EncryptedDocumentStoreTest {
     private static final int MASTER_KEY_BYTES = 32;
     private static final String BLOB_KEY_PATTERN = "docs/[0-9a-f-]{36}";
 
-    @TempDir
-    Path dir;
+    private Path dir;
 
     private EnvelopeCipher cipher;
     private BlobStorage blobs;
@@ -46,12 +46,18 @@ class EncryptedDocumentStoreTest {
 
     @BeforeEach
     void setUp() {
+        dir = ScratchDirs.create("sage-store");
         byte[] master = new byte[MASTER_KEY_BYTES];
         new SecureRandom().nextBytes(master);
         cipher = new EnvelopeCipher(new LocalKeyProvider(master));
         blobs = new LocalBlobStorage(dir);
         events = new CopyOnWriteArrayList<>();
         store = newStore();
+    }
+
+    @AfterEach
+    void tearDown() {
+        ScratchDirs.delete(dir);
     }
 
     private EncryptedDocumentStore newStore() {

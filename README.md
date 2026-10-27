@@ -16,7 +16,17 @@ Precisa de JDK 25. O Maven Wrapper já vem no repositório, então não é preci
 
 O `verify` roda o Spotless (formatação), o Checkstyle, o SpotBugs, os testes e o JaCoCo, que exige 80% de cobertura de linhas. Se a formatação reclamar, `.\mvnw.cmd spotless:apply` corrige.
 
-Para a imagem Docker:
+## Modelo de embeddings
+
+A busca híbrida usa o `multilingual-e5-small` (470 MB), que não vai para o git. Baixe-o antes de rodar os testes que o usam e antes de subir a aplicação com busca por significado:
+
+```
+.\scripts\download-models.ps1     # ou scripts/download-models.sh
+```
+
+Os arquivos vão para `models/` (ou para `sage.models.dir`) e são conferidos contra o sha256 de `models.lock`. Sem eles tudo continua funcionando, só que a busca é apenas BM25 e o log avisa na subida. Detalhes em [docs/arquitetura.md](docs/arquitetura.md#busca-híbrida).
+
+Para a imagem Docker (ela baixa e confere o modelo no build):
 
 ```
 docker build -t sage-agent .

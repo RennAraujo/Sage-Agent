@@ -4,10 +4,12 @@ import io.github.rennaraujo.sage.document.Document;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentMetadata;
 import io.github.rennaraujo.sage.document.Source;
+import io.github.rennaraujo.sage.search.embedding.EmbeddingModel;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -27,16 +29,19 @@ import org.apache.lucene.analysis.miscellaneous.PerFieldAnalyzerWrapper;
 import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.KnnFloatVectorField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.index.VectorSimilarityFunction;
 import org.apache.lucene.search.BooleanClause.Occur;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.KnnFloatVectorQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
@@ -44,12 +49,17 @@ import org.apache.lucene.search.TermInSetQuery;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.ByteBuffersDirectory;
 import org.apache.lucene.util.BytesRef;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Índice BM25 do Lucene inteiramente em memória ({@link ByteBuffersDirectory}): nada indexado toca o disco, nem em
  * arquivo de índice nem em temporário. Cada trecho vira um documento Lucene com os campos de filtro como
  * {@link StringField} e o texto em dois {@link TextField}: {@code text} (tokenizer padrão, minúsculas, sem acento) e
  * {@code exact} (separado por espaço, só minúsculas) para identificadores como {@code Stream.toList()}.
+ *
+ * <p>Com um {@link EmbeddingModel}, cada trecho também ganha um vetor ({@code KnnFloatVectorField}, cosseno) e a busca
+ * funde BM25 e KNN por RRF ({@link HybridRanker}). Sem modelo, ou se o modelo falhar, a busca é só BM25.
  *
  * <p>A consulta nunca passa pelo parser do Lucene: o texto do usuário é analisado em termos e a consulta é montada por
  * código, então nenhuma entrada vira sintaxe de consulta nem lança exceção de parse.
@@ -63,6 +73,7 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
     private static final String F_VERSION = "version";
     private static final String F_TEXT = "text";
     private static final String F_EXACT = "exact";
+    private static final String F_VECTOR = "vector";
     private static final String S_LANGUAGE = "languageLabel";
     private static final String S_VERSION = "versionLabel";
     private static final String S_HEADING = "headingPath";
@@ -74,8 +85,13 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
     /** Teto de termos distintos por consulta: protege contra consulta gigante (o Lucene limita a 1024 cláusulas). */
     private static final int MAX_QUERY_TERMS = 64;
 
+    private static final Logger LOG = LoggerFactory.getLogger(LuceneSearchIndex.class);
+
     private final MarkdownChunker chunker;
     private final IndexReadiness readiness;
+    private final int candidates;
+    private final Optional<EmbeddingModel> embeddings;
+    private final HybridRanker ranker = new HybridRanker();
     private final Analyzer textAnalyzer = textAnalyzer();
     private final Analyzer exactAnalyzer = exactAnalyzer();
     private final ByteBuffersDirectory directory = new ByteBuffersDirectory();
@@ -85,9 +101,17 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
     private final Map<String, DocInfo> infos = new ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
 
+    /** Índice só com BM25. */
     public LuceneSearchIndex(RetrievalProperties properties, IndexReadiness readiness) {
+        this(properties, readiness, Optional.empty());
+    }
+
+    public LuceneSearchIndex(
+            RetrievalProperties properties, IndexReadiness readiness, Optional<EmbeddingModel> embeddings) {
         this.chunker = new MarkdownChunker(properties.maxChunkChars());
         this.readiness = readiness;
+        this.candidates = properties.candidates();
+        this.embeddings = embeddings;
         try {
             // Sem o wrapper o writer indexaria "exact" com o analisador de "text" e só a consulta usaria o de espaço.
             Analyzer indexAnalyzer = new PerFieldAnalyzerWrapper(textAnalyzer, Map.of(F_EXACT, exactAnalyzer));
@@ -185,9 +209,58 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
         if (scoring == null) {
             return List.of();
         }
-        BooleanQuery.Builder bool = new BooleanQuery.Builder().add(scoring, Occur.MUST);
-        addFilters(bool, filter);
-        return run(bool.build(), limit);
+        Query filterQuery = filterQuery(filter);
+        Optional<float[]> queryVector = embeddings.flatMap(model -> embedQuery(model, query));
+        if (queryVector.isEmpty()) {
+            return run(bm25Query(scoring, filterQuery), limit);
+        }
+        int wanted = Math.max(candidates, limit);
+        List<Chunk> bm25 = run(bm25Query(scoring, filterQuery), wanted);
+        List<Chunk> nearest =
+                runVector(new KnnFloatVectorQuery(F_VECTOR, queryVector.get(), wanted, filterQuery), wanted);
+        return fuse(bm25, nearest, limit);
+    }
+
+    private static Query bm25Query(Query scoring, Query filterQuery) {
+        return new BooleanQuery.Builder()
+                .add(scoring, Occur.MUST)
+                .add(filterQuery, Occur.FILTER)
+                .build();
+    }
+
+    private List<Chunk> fuse(List<Chunk> bm25, List<Chunk> nearest, int limit) {
+        Map<String, Chunk> byId = new LinkedHashMap<>();
+        bm25.forEach(c -> byId.putIfAbsent(c.id(), c));
+        nearest.forEach(c -> byId.putIfAbsent(c.id(), c));
+        List<String> fused = ranker.fuse(
+                bm25.stream().map(Chunk::id).toList(),
+                nearest.stream().map(Chunk::id).toList(),
+                limit);
+        return fused.stream().map(byId::get).toList();
+    }
+
+    /** Vetor da consulta, ou vazio se o modelo falhou (a busca cai para BM25; o log leva só a classe do erro). */
+    private static Optional<float[]> embedQuery(EmbeddingModel model, String query) {
+        try {
+            return usable(model.embedQuery(query));
+        } catch (RuntimeException e) {
+            LOG.warn(
+                    "Embedding da consulta falhou ({}); busca só com BM25",
+                    e.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    /** Vetor nulo, com valor não finito ou sem direção (só zeros) não serve ao cosseno. */
+    private static Optional<float[]> usable(float[] vector) {
+        boolean nonZero = false;
+        for (float x : vector) {
+            if (!Float.isFinite(x)) {
+                return Optional.empty();
+            }
+            nonZero |= x != 0f;
+        }
+        return nonZero ? Optional.of(vector) : Optional.empty();
     }
 
     @Override
@@ -259,10 +332,28 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
             String searchable = section.headingPath() + "\n" + section.text();
             d.add(new TextField(F_TEXT, searchable, Field.Store.NO));
             d.add(new TextField(F_EXACT, searchable, Field.Store.NO));
+            embedPassage(searchable, ref)
+                    .ifPresent(v -> d.add(new KnnFloatVectorField(F_VECTOR, v, VectorSimilarityFunction.COSINE)));
             out.add(d);
             ordinal++;
         }
         return out;
+    }
+
+    /** Vetor do trecho; vazio sem modelo ou se ele falhar (fica só no BM25; o log leva a referência curta). */
+    private Optional<float[]> embedPassage(String searchable, String ref) {
+        if (embeddings.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
+            return usable(embeddings.get().embedPassage(searchable));
+        } catch (RuntimeException e) {
+            LOG.warn(
+                    "Embedding do trecho de {} falhou ({}); indexado só no BM25",
+                    ref,
+                    e.getClass().getSimpleName());
+            return Optional.empty();
+        }
     }
 
     /** {@code null} quando a consulta não tem nenhum termo analisável. */
@@ -300,7 +391,7 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
      * {@code sources} (vazio vale as duas). Linguagem e versão restringem só o público: documento interno não tem
      * versão e é filtrado apenas por estar ou não nas fontes pedidas.
      */
-    private static void addFilters(BooleanQuery.Builder bool, SearchFilter filter) {
+    private static Query filterQuery(SearchFilter filter) {
         boolean anySource = filter.sources().isEmpty();
         BooleanQuery.Builder branches = new BooleanQuery.Builder();
         if (anySource || filter.sources().contains(Source.PUBLIC)) {
@@ -322,7 +413,7 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
         if (anySource || filter.sources().contains(Source.INTERNAL)) {
             branches.add(new TermQuery(new Term(F_SOURCE, Source.INTERNAL.label())), Occur.SHOULD);
         }
-        bool.add(branches.build(), Occur.FILTER);
+        return branches.build();
     }
 
     private List<Chunk> run(Query query, int limit) {
@@ -332,6 +423,17 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
             return read(searcher, hits);
         } catch (IOException e) {
             throw new UncheckedIOException("Falha na busca", e);
+        } finally {
+            release(searcher);
+        }
+    }
+
+    private List<Chunk> runVector(Query knn, int n) {
+        IndexSearcher searcher = acquire();
+        try {
+            return read(searcher, searcher.search(knn, n).scoreDocs);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Falha na busca vetorial", e);
         } finally {
             release(searcher);
         }

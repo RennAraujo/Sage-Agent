@@ -32,6 +32,8 @@
         <flexmark.version>0.64.8</flexmark.version>
         <jsoup.version>1.22.2</jsoup.version>
         <lucene.version>10.5.2</lucene.version>
+        <onnxruntime.version>1.31.1</onnxruntime.version>
+        <djl.tokenizers.version>0.39.0</djl.tokenizers.version>
     </properties>
 
     <dependencyManagement>
@@ -110,6 +112,16 @@
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-analysis-common</artifactId>
             <version>${lucene.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>${onnxruntime.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.huggingface</groupId>
+            <artifactId>tokenizers</artifactId>
+            <version>${djl.tokenizers.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
