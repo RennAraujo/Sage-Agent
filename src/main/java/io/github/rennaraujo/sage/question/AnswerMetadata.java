@@ -9,7 +9,8 @@ import java.util.Optional;
 
 /**
  * Metadados da resposta, enviados antes do texto e de novo no fim (com frases descartadas e tempos finais).
- * {@code versionUsed} é a versão pública usada no filtro da busca, vazia quando não houve uma só.
+ * {@code versionUsed} é a versão pública usada no filtro da busca, vazia quando não houve uma só. {@code consulted} só
+ * é preenchido no fim: são as fontes que as frases aprovadas citaram, as mesmas das linhas "Documentação consultada".
  */
 public record AnswerMetadata(
         String conversationId,
@@ -20,10 +21,12 @@ public record AnswerMetadata(
         Optional<String> versionUsed,
         boolean unreviewedSources,
         int droppedSentences,
-        Map<String, Long> timingsMillis) {
+        Map<String, Long> timingsMillis,
+        List<ConsultedSource> consulted) {
 
     public AnswerMetadata {
         citations = List.copyOf(citations);
+        consulted = List.copyOf(consulted);
         timingsMillis = Collections.unmodifiableMap(new LinkedHashMap<>(timingsMillis));
     }
 }

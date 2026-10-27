@@ -141,8 +141,40 @@ class QuestionControllerTest {
                 .contains("\"frasesDescartadas\":1")
                 .doesNotContain("Sem fonte.")
                 .doesNotContain(CANARY);
+        String consulted = "\"documentacaoConsultada\":[{\"linguagem\":\"java\",\"nome\":\"Java\",\"versao\":\"21\","
+                + "\"fonte\":\"publico\",\"versaoNaoInformada\":false}]";
+        assertThat(body.substring(body.indexOf("event:done"))).contains(consulted);
+        assertThat(body.substring(0, body.indexOf("event:text"))).doesNotContain("documentacaoConsultada");
         verify(rateLimiter).require("leitor-teste", RateLimitedAction.QUESTION);
         verify(auditLog, times(2)).record(any());
+    }
+
+    @Test
+    void donePayloadMarksUnknownVersionWithNull() {
+        AnswerMetadata meta = new AnswerMetadata(
+                "c-1",
+                Route.FAST_MODEL,
+                Optional.empty(),
+                0.9,
+                List.of(),
+                Optional.empty(),
+                false,
+                0,
+                java.util.Map.of(),
+                List.of(new ConsultedSource("java", "Java", Optional.empty(), Source.PUBLIC)));
+
+        @SuppressWarnings("unchecked")
+        List<java.util.Map<String, Object>> consulted = (List<java.util.Map<String, Object>>)
+                QuestionController.donePayload(meta).get("documentacaoConsultada");
+
+        assertThat(consulted)
+                .singleElement()
+                .satisfies(source -> assertThat(source)
+                        .containsEntry("linguagem", "java")
+                        .containsEntry("versao", null)
+                        .containsEntry("fonte", "publico")
+                        .containsEntry("versaoNaoInformada", true));
+        assertThat(QuestionController.payload(meta)).doesNotContainKey("documentacaoConsultada");
     }
 
     @Test
@@ -204,6 +236,9 @@ class QuestionControllerTest {
         ResponseEntity<String> response = ask("{\"pergunta\":\"como usar toList no java?\"}");
 
         assertThat(response.getBody()).contains("event:error").doesNotContain(CANARY);
+        assertThat(response.getBody()).contains("event:metadata", "\"conversaId\"");
+        assertThat(response.getBody().indexOf("event:metadata"))
+                .isLessThan(response.getBody().indexOf("event:error"));
     }
 
     @Test

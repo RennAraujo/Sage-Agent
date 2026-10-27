@@ -131,6 +131,125 @@ class AnswerGuardTest {
     }
 
     @Test
+    void proseTagWithExtraInfoStringIsRejected() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out = run(guard, "Veja [1].\n```text title=\"regras\"\nvar x = 1;\n```\n");
+
+        assertThat(out).containsExactly("Veja [1].");
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void proseTagInBracesIsRejected() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out =
+                run(guard, "Veja [1].\n```{.text}\nvar x = 1;\n```\nVeja [2].\n```{.markdown .x}\nvar y;\n```\n");
+
+        assertThat(out).containsExactly("Veja [1].", "Veja [2].");
+        assertThat(guard.dropped()).isEqualTo(2);
+    }
+
+    @Test
+    void proseTagWithCommaSlashOrUnderscoreIsRejected() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out = run(
+                guard,
+                "A [1].\n```text,foo\nvar a;\n```\nB [2].\n```text/plain\nvar b;\n```\n"
+                        + "C [3].\n```plain_text\nvar c;\n```\n");
+
+        assertThat(out).containsExactly("A [1].", "B [2].", "C [3].");
+        assertThat(guard.dropped()).isEqualTo(3);
+    }
+
+    @Test
+    void absenceClaimOutsideTemplateIsDropped() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+
+        List<String> out = run(
+                guard,
+                "O record não existe no Java 8 [1]. O recurso é inexistente na versão 8 [2]. "
+                        + "Não há suporte a isso no Spring Boot 3.5 [1]. "
+                        + "Também não está disponível no Java 17 [3]. O Java 8 não possui records [2]. "
+                        + "A documentação do Java 8 disponível não menciona records [1]. Records são finais [2].");
+
+        assertThat(out)
+                .containsExactly(
+                        "A documentação do Java 8 disponível não menciona records [1].", "Records são finais [2].");
+        assertThat(guard.dropped()).isEqualTo(5);
+    }
+
+    @Test
+    void citedDocumentedEventsPassButNonExistenceIsDropped() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+
+        List<String> out = run(
+                guard,
+                "O método foi removido no Java 11 [1]. Records foram introduzidos no Java 16 [2]. "
+                        + "O applet deixou de existir no 11 [1]. O Nashorn foi descontinuado [3]. "
+                        + "O recurso não existe no Java 8 [2]. "
+                        + "A documentação do Java 8 disponível não menciona records [2].");
+
+        assertThat(out)
+                .containsExactly(
+                        "O método foi removido no Java 11 [1].",
+                        "Records foram introduzidos no Java 16 [2].",
+                        "O applet deixou de existir no 11 [1].",
+                        "O Nashorn foi descontinuado [3].",
+                        "A documentação do Java 8 disponível não menciona records [2].");
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void behaviouralNegativesPassEvenInComparisons() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+
+        List<String> out = run(
+                guard,
+                "O método lança NoSuchFileException se o arquivo não existe [1]. O record não possui setters [2]. "
+                        + "Não há suporte a herança entre records [3].");
+
+        assertThat(out)
+                .containsExactly(
+                        "O método lança NoSuchFileException se o arquivo não existe [1].",
+                        "O record não possui setters [2].",
+                        "Não há suporte a herança entre records [3].");
+        assertThat(guard.dropped()).isZero();
+    }
+
+    @Test
+    void absenceCheckIsOffOutsideComparisons() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out =
+                run(guard, "O recurso não existe no Java 8 [2]. O método lança erro se o arquivo não existe [1].");
+
+        assertThat(out)
+                .containsExactly(
+                        "O recurso não existe no Java 8 [2].", "O método lança erro se o arquivo não existe [1].");
+    }
+
+    @Test
+    void absenceTemplateStillNeedsCitation() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+
+        List<String> out = run(guard, "A documentação do Java 8 disponível não menciona records. Use records [1].");
+
+        assertThat(out).containsExactly("Use records [1].");
+    }
+
+    @Test
+    void codeTagWithExtraInfoStringPasses() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out = run(guard, "Veja [1].\n```java title=\"A.java\"\nIsto parece prosa.\n```\n");
+
+        assertThat(out).containsExactly("Veja [1].", "```java title=\"A.java\"\nIsto parece prosa.\n```");
+    }
+
+    @Test
     void untaggedFenceWithMostlyProseIsRejected() {
         AnswerGuard guard = new AnswerGuard(CONTEXT);
 

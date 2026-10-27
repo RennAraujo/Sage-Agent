@@ -61,6 +61,9 @@ sage:
     candidates: 20
     # Quantos trechos, depois do reranker, vão para o contexto do modelo de linguagem.
     context-chunks: 5
+    # Teto de trechos somados numa comparação com busca por versão (dividido entre as versões, e a interna se houver).
+    # Mínimo 4: cada grupo buscado tem ao menos 2 trechos, então cabem teto/2 grupos.
+    comparison-max-chunks: 8
     # Limiar de relevância sem o reranker (o score vira cobertura lexical, que perde para pergunta pt sobre doc en).
     # 0.0 = qualquer candidato passa. Consumido pelo roteamento da pergunta.
     min-score-without-reranker: 0.0

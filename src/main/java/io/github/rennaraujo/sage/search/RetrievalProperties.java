@@ -24,4 +24,6 @@ public record RetrievalProperties(
         double minScore,
 
         @DecimalMin("0.0") @DecimalMax("1.0") @DefaultValue("0.0")
-        double minScoreWithoutReranker) {}
+        double minScoreWithoutReranker,
+
+        @Min(4) @DefaultValue("8") int comparisonMaxChunks) {}

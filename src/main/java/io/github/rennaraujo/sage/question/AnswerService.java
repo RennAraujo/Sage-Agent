@@ -12,6 +12,7 @@ import io.github.rennaraujo.sage.question.llm.ModelProperties;
 import io.github.rennaraujo.sage.question.llm.ModelTier;
 import io.github.rennaraujo.sage.question.llm.Prompt;
 import io.github.rennaraujo.sage.question.llm.PromptBuilder;
+import io.github.rennaraujo.sage.question.llm.VersionContext;
 import io.github.rennaraujo.sage.search.Chunk;
 import io.github.rennaraujo.sage.search.Retriever;
 import io.github.rennaraujo.sage.search.ScoredChunk;
@@ -19,6 +20,7 @@ import io.github.rennaraujo.sage.search.SearchFilter;
 import io.github.rennaraujo.sage.search.SearchIndex;
 import java.io.UncheckedIOException;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
@@ -32,8 +34,10 @@ import java.util.SortedSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import reactor.core.Disposable;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 
@@ -52,7 +56,12 @@ import reactor.core.publisher.Sinks;
  * primeira frase aprovada que cita um trecho daquela linguagem e versão (só fontes de fato citadas aparecem), e
  * "Considerei a versão 25, a mais recente disponível." quando a pergunta não trouxe versão. Versão pedida que não está
  * no acervo vira "Não tenho a documentação do Java 8 no acervo."; numa pergunta só pública isso encerra a resposta sem
- * chamar o modelo, numa mista o lado interno segue.
+ * chamar o modelo, a não ser numa comparação em que outra versão pedida existe. Numa pergunta mista o lado interno
+ * segue.
+ *
+ * <p>Comparação entre duas ou mais versões busca cada versão separadamente e vai direto para o modelo forte, que
+ * responde versão a versão. Versão sem nenhum trecho recebe do código "A documentação do Java 17 disponível não
+ * menciona isso.". O resto começa no modelo rápido, que pode pedir escalada pela ferramenta {@code escalate}.
  *
  * <p>O modelo tem um prazo total ({@code sage.models.timeout}), não por token, e o stream é cancelado assim que o
  * cliente vai embora ({@link AnswerSink#onClose}), para o Bedrock parar de gerar.
@@ -65,7 +74,12 @@ public final class AnswerService {
     static final String INFERRED_VERSION = "Considerei a versão %s, a mais recente disponível.";
     static final String CONSULTED = "Documentação consultada: %s";
     static final String MISSING_VERSION = "Não tenho a documentação do %s %s no acervo.";
+    static final String NOT_MENTIONED = "A documentação do %s disponível não menciona isso.";
     static final String NO_VERSION = "(versão não informada)";
+    static final String ONLY_COMPARED = "Comparei só as versões %s; peça as demais em outra pergunta.";
+
+    /** Piso de trechos por grupo numa comparação; também limita quantos grupos cabem no teto. */
+    static final int MIN_CHUNKS_PER_GROUP = 2;
 
     private static final Logger LOG = LoggerFactory.getLogger(AnswerService.class);
 
@@ -117,38 +131,41 @@ public final class AnswerService {
 
         Plan plan = plan(request.question());
         timer.lap("analise");
-        List<ScoredChunk> chunks =
-                plan.skipSearch() ? List.of() : retriever.retrieve(request.question(), plan.filter());
+        Retrieval found = retrieve(request.question(), plan);
+        List<ScoredChunk> chunks = found.chunks();
         timer.lap("busca");
         Route route = decider.decide(plan.analysis(), chunks, plan.missing());
+        progress.route(route);
 
         recordAsked(request.actor(), conversationId, route, chunks);
         Answered answered;
         try {
             answered = route == Route.NOT_DOCUMENTED
                     ? notDocumented(plan, conversationId, chunks, timer, sink)
-                    : withModel(request, plan, conversationId, chunks, timer, sink, progress);
+                    : withModel(request, plan, conversationId, found, route, timer, sink, progress);
         } catch (RuntimeException e) {
             String outcome = interrupted(e, progress) ? "interrupted" : "failed";
             try {
-                recordAnswered(request.actor(), conversationId, route, outcome, progress);
+                recordAnswered(request.actor(), conversationId, outcome, progress);
             } catch (AuditException auditFailure) {
                 e.addSuppressed(auditFailure);
             }
             LOG.warn(
                     "Pergunta não concluída: rota={} desfecho={} falha={} tempos={}",
-                    route,
+                    progress.route(),
                     outcome,
                     e.getClass().getName(),
                     timer.timings());
             throw e;
         }
-        recordAnswered(request.actor(), conversationId, route, "completed", progress);
+        recordAnswered(request.actor(), conversationId, "completed", progress);
         sink.done(answered.metadata());
         LOG.info(
-                "Pergunta respondida: rota={} modelo={} topScore={} trechos={} descartadas={} tempos={} refs={}",
-                route,
+                "Pergunta respondida: rota={} modelo={} escalada={} topScore={} trechos={} descartadas={} tempos={} "
+                        + "refs={}",
+                answered.metadata().route(),
                 answered.metadata().model().map(Enum::name).orElse("nenhum"),
+                progress.escalated(),
                 String.format(Locale.ROOT, "%.3f", RouteDecider.topScore(chunks)),
                 chunks.size(),
                 answered.metadata().droppedSentences(),
@@ -156,22 +173,40 @@ public final class AnswerService {
                 chunks.stream().map(c -> c.chunk().documentId().logRef()).toList());
     }
 
-    /** Análise, versão inferida, versões faltantes e o filtro de busca resultante. */
+    /**
+     * Análise, versão inferida, versões faltantes, o filtro de busca resultante e, numa comparação entre versões, as
+     * versões que existem no acervo e serão buscadas uma a uma.
+     */
     private record Plan(
             QuestionAnalysis analysis,
             Optional<String> inferred,
             List<String> missing,
             SearchFilter filter,
-            Optional<String> versionUsed) {
+            Optional<String> versionUsed,
+            List<String> perVersion) {
 
         boolean skipSearch() {
-            return RouteDecider.publicOnly(analysis) && !missing.isEmpty();
+            return RouteDecider.publicOnly(analysis) && !missing.isEmpty() && perVersion.isEmpty();
+        }
+
+        boolean byVersion() {
+            return !perVersion.isEmpty();
+        }
+    }
+
+    /** Trechos da busca e, quando a busca foi por versão, os mesmos trechos agrupados por versão. */
+    private record Retrieval(List<ScoredChunk> chunks, List<VersionContext> groups, Optional<String> capNotice) {
+
+        Retrieval(List<ScoredChunk> chunks, List<VersionContext> groups) {
+            this(chunks, groups, Optional.empty());
         }
     }
 
     private Plan plan(String question) {
         QuestionAnalysis analysis = analyzer.analyze(question, Optional.empty());
-        Optional<String> inferred = inferVersion(analysis);
+        boolean comparison = analysis.type() == QuestionType.COMPARISON;
+        // Comparação sem versão ("em qual versão foi introduzido?") precisa de todas as versões, não só da última.
+        Optional<String> inferred = comparison ? Optional.empty() : inferVersion(analysis);
         List<String> missing = decider.missingVersions(analysis);
         List<String> versions = inferred.map(List::of).orElse(analysis.versions());
         Set<Source> sources = EnumSet.copyOf(analysis.sources());
@@ -182,6 +217,13 @@ public final class AnswerService {
                 sources.remove(Source.PUBLIC);
             }
         }
+        List<String> perVersion = RouteDecider.perVersion(analysis)
+                ? analysis.versions().stream().filter(v -> !missing.contains(v)).toList()
+                : List.of();
+        if (comparison && versions.size() < 2) {
+            // Comparação com uma versão só ("isso existe no java 25?"): a resposta pode estar em qualquer versão.
+            versions = List.of();
+        }
         boolean singlePublicVersion =
                 sources.contains(Source.PUBLIC) && analysis.language().isPresent() && versions.size() == 1;
         return new Plan(
@@ -189,7 +231,97 @@ public final class AnswerService {
                 inferred,
                 missing,
                 new SearchFilter(sources, analysis.language(), versions),
-                singlePublicVersion ? Optional.of(versions.get(0)) : Optional.empty());
+                singlePublicVersion ? Optional.of(versions.get(0)) : Optional.empty(),
+                perVersion);
+    }
+
+    /**
+     * Busca normal, ou uma busca por grupo numa comparação: um grupo por versão pública e, numa pergunta mista, um para
+     * a documentação interna. O teto {@code sage.retrieval.comparison-max-chunks} (8) é dividido entre os grupos, com o
+     * resto indo para os primeiros: duas versões ficam com 4 e 4, duas versões e a interna com 3, 3 e 2. Cada grupo só
+     * fica com os trechos no limiar de relevância; o que um grupo não usou vai, numa segunda busca, para os grupos que
+     * encheram a sua parte. Buscando tudo junto, a versão com mais texto sobre o assunto ocuparia o contexto inteiro e
+     * a outra pareceria não ter nada.
+     *
+     * <p>Para cada grupo buscado ter pelo menos {@link #MIN_CHUNKS_PER_GROUP} trechos, no máximo {@code teto / 2}
+     * grupos são buscados (4 com o padrão), contando o interno. Versões além disso não são buscadas, viram grupos
+     * marcados como não buscados (sem "não menciona") e o código avisa "Comparei só as versões ...".
+     */
+    private Retrieval retrieve(String question, Plan plan) {
+        if (plan.skipSearch()) {
+            return new Retrieval(List.of(), List.of());
+        }
+        if (!plan.byVersion()) {
+            return new Retrieval(retriever.retrieve(question, plan.filter()), List.of());
+        }
+        boolean internal = plan.analysis().sources().contains(Source.INTERNAL);
+        int budget = retriever.comparisonMaxChunks();
+        int maxPublic = Math.max(1, budget / MIN_CHUNKS_PER_GROUP - (internal ? 1 : 0));
+        List<String> requested = plan.perVersion();
+        List<String> searched = requested.subList(0, Math.min(maxPublic, requested.size()));
+        List<String> skipped = requested.subList(searched.size(), requested.size());
+        List<VersionContext> slots = new ArrayList<>();
+        List<SearchFilter> filters = new ArrayList<>();
+        for (String version : searched) {
+            slots.add(new VersionContext(version, List.of()));
+            filters.add(new SearchFilter(Set.of(Source.PUBLIC), plan.analysis().language(), List.of(version)));
+        }
+        if (internal) {
+            slots.add(VersionContext.internal(List.of()));
+            filters.add(new SearchFilter(Set.of(Source.INTERNAL), Optional.empty(), List.of()));
+        }
+        int[] shares = fairSplit(budget, slots.size());
+        List<List<ScoredChunk>> found = new ArrayList<>();
+        int spare = 0;
+        for (int i = 0; i < slots.size(); i++) {
+            shares[i] = Math.max(MIN_CHUNKS_PER_GROUP, shares[i]);
+            found.add(decider.relevant(retriever.retrieve(question, filters.get(i), shares[i])));
+            spare += shares[i] - found.get(i).size();
+        }
+        List<Integer> full = new ArrayList<>();
+        for (int i = 0; i < slots.size(); i++) {
+            if (shares[i] > 0 && found.get(i).size() == shares[i]) {
+                full.add(i);
+            }
+        }
+        if (spare > 0 && !full.isEmpty()) {
+            int[] extra = fairSplit(spare, full.size());
+            for (int k = 0; k < full.size(); k++) {
+                int i = full.get(k);
+                shares[i] += extra[k];
+                found.set(i, decider.relevant(retriever.retrieve(question, filters.get(i), shares[i])));
+            }
+        }
+        List<VersionContext> groups = new ArrayList<>(slots.size());
+        List<ScoredChunk> all = new ArrayList<>();
+        for (int i = 0; i < slots.size(); i++) {
+            VersionContext slot = slots.get(i);
+            groups.add(new VersionContext(slot.version(), slot.internal(), true, found.get(i)));
+            all.addAll(found.get(i));
+        }
+        skipped.forEach(v -> groups.add(VersionContext.notSearched(v)));
+        Optional<String> notice = skipped.isEmpty()
+                ? Optional.empty()
+                : Optional.of(ONLY_COMPARED.formatted(joined(
+                        searched.stream().map(v -> languageName(plan) + " " + v).toList())));
+        return new Retrieval(List.copyOf(all), List.copyOf(groups), notice);
+    }
+
+    /** "A", "A e B", "A, B e C". */
+    private static String joined(List<String> items) {
+        if (items.size() <= 1) {
+            return String.join("", items);
+        }
+        return String.join(", ", items.subList(0, items.size() - 1)) + " e " + items.get(items.size() - 1);
+    }
+
+    /** Divide {@code total} em {@code parts} partes que diferem em no máximo 1, as maiores primeiro. */
+    private static int[] fairSplit(int total, int parts) {
+        int[] shares = new int[parts];
+        for (int i = 0; i < parts; i++) {
+            shares[i] = total / parts + (i < total % parts ? 1 : 0);
+        }
+        return shares;
     }
 
     private Answered notDocumented(
@@ -203,7 +335,8 @@ public final class AnswerService {
                 plan.versionUsed(),
                 false,
                 0,
-                timer.timings());
+                timer.timings(),
+                List.of());
         sink.metadata(metadata);
         missingNotices(plan).forEach(sink::text);
         if (!plan.skipSearch()) {
@@ -211,91 +344,311 @@ public final class AnswerService {
             sink.text(NO_CONTEXT);
         }
         timer.total();
-        return new Answered(withFinal(metadata, 0, timer));
+        return new Answered(withFinal(metadata, 0, timer, List.of()));
     }
 
+    /**
+     * Chama o modelo. A comparação vai direto para o STRONG; o resto começa no FAST com a ferramenta {@code escalate}
+     * liberada. Se o FAST pedir escalada antes de alguma frase aprovada, o stream dele é cancelado e o STRONG responde
+     * com o mesmo contexto; pedido depois de frase aprovada é ignorado (ela já está na tela do usuário). Um preâmbulo
+     * sem citação ("Vou passar para um modelo mais forte.") não conta: o guard o descarta e a escalada vale. Por isso o
+     * {@code metadata} do caminho FAST só sai com a primeira saída aprovada (ou a escalada, ou o fim): ele já diz a
+     * rota e o modelo de verdade. Se o modelo falhar antes disso, o {@code metadata} sai mesmo assim, antes do
+     * {@code error}. O prazo {@code sage.models.timeout} vale para as duas chamadas somadas.
+     */
     private Answered withModel(
             AnswerRequest request,
             Plan plan,
             String conversationId,
-            List<ScoredChunk> chunks,
+            Retrieval found,
+            Route route,
             Timer timer,
             AnswerSink sink,
             Progress progress) {
+        List<ScoredChunk> chunks = found.chunks();
         List<Citation> citations = citations(chunks);
+        ModelTier tier = route == Route.STRONG_MODEL ? ModelTier.STRONG : ModelTier.FAST;
         AnswerMetadata metadata = new AnswerMetadata(
                 conversationId,
-                Route.FAST_MODEL,
-                Optional.of(ModelTier.FAST),
+                route,
+                Optional.of(tier),
                 RouteDecider.topScore(chunks),
                 citations,
                 plan.versionUsed(),
                 chunks.stream().anyMatch(c -> !c.chunk().reviewed()),
                 0,
-                timer.timings());
-        sink.metadata(metadata);
-        missingNotices(plan).forEach(sink::text);
-        plan.inferred().ifPresent(v -> sink.text(INFERRED_VERSION.formatted(v)));
-
-        Prompt prompt =
-                promptBuilder.build(request.question(), chunks, plan.analysis().type(), false);
-        AnswerGuard guard = new AnswerGuard(chunks.size());
-        progress.start(guard, citations);
-        Emitter emitter = new Emitter(sink, chunks);
-        AtomicBoolean deadline = new AtomicBoolean();
-        if (progress.clientGone()) {
-            throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
+                timer.timings(),
+                List.of());
+        Opening opening = new Opening(sink, metadata, prelude(plan, found));
+        Emitter emitter = new Emitter(sink, opening, chunks, found.groups(), languageName(plan));
+        try {
+            if (tier == ModelTier.STRONG) {
+                opening.send();
+            }
+            QuestionType type = plan.analysis().type();
+            Prompt prompt = plan.byVersion()
+                    ? promptBuilder.buildByVersion(request.question(), languageName(plan), found.groups())
+                    : promptBuilder.build(request.question(), chunks, type, tier == ModelTier.FAST);
+            try (Deadline deadline = new Deadline(models.timeout())) {
+                Call call = new Call(chunks, citations, emitter, progress, deadline, type == QuestionType.COMPARISON);
+                if (call.run(tier, prompt)) {
+                    progress.escalate();
+                    opening.escalate();
+                    opening.send();
+                    call.run(ModelTier.STRONG, promptBuilder.build(request.question(), chunks, type, false));
+                }
+            }
+        } catch (RuntimeException e) {
+            if (!progress.clientGone()) {
+                // O cliente ainda está lá: recebe ao menos o metadata (com o conversaId) antes do error.
+                try {
+                    opening.send();
+                } catch (RuntimeException sendFailure) {
+                    e.addSuppressed(sendFailure);
+                }
+            }
+            throw e;
         }
-        languageModel.stream(ModelTier.FAST, prompt)
-                .takeUntilOther(progress.closed())
-                .takeUntilOther(Mono.delay(models.timeout()).doOnNext(tick -> deadline.set(true)))
-                .doOnNext(event -> handle(event, guard, emitter))
-                .blockLast();
-        if (progress.clientGone()) {
-            throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
-        }
-        if (deadline.get()) {
-            throw new AnswerAbortedException(AnswerAbortedException.Reason.MODEL_DEADLINE);
-        }
-        guard.finish().forEach(emitter::accepted);
         timer.lap("modelo");
         timer.total();
-        return new Answered(withFinal(metadata, guard.dropped(), timer));
+        return new Answered(withFinal(opening.metadata(), progress.dropped(), timer, emitter.consulted()));
     }
 
-    private static void handle(ModelEvent event, AnswerGuard guard, Emitter emitter) {
-        switch (event) {
-            case ModelEvent.TextDelta delta -> guard.accept(delta.text()).forEach(emitter::accepted);
-            case ModelEvent.EscalationRequested ignored ->
-                // allowEscalation=false aqui; o pedido é ignorado até a Task 12 ligar a ferramenta.
-                LOG.debug("Pedido de escalonamento ignorado");
-            case ModelEvent.Completed ignored -> {
-                // Nada a fazer: o finish() do guard roda depois do stream.
+    /** Uma chamada ao modelo, com guard novo; devolve {@code true} se o modelo pediu escalada a tempo. */
+    private final class Call {
+        private final List<ScoredChunk> chunks;
+        private final List<Citation> citations;
+        private final Emitter emitter;
+        private final Progress progress;
+        private final Deadline deadline;
+        private final boolean comparison;
+
+        Call(
+                List<ScoredChunk> chunks,
+                List<Citation> citations,
+                Emitter emitter,
+                Progress progress,
+                Deadline deadline,
+                boolean comparison) {
+            this.chunks = chunks;
+            this.citations = citations;
+            this.emitter = emitter;
+            this.progress = progress;
+            this.deadline = deadline;
+            this.comparison = comparison;
+        }
+
+        boolean run(ModelTier tier, Prompt prompt) {
+            AnswerGuard guard = new AnswerGuard(chunks.size(), comparison);
+            progress.start(guard, citations);
+            if (progress.clientGone()) {
+                throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
+            }
+            AtomicBoolean escalated = new AtomicBoolean();
+            languageModel.stream(tier, prompt)
+                    .takeUntilOther(progress.closed())
+                    .takeUntilOther(deadline.reached())
+                    .takeUntil(event -> prompt.allowEscalation()
+                            && event instanceof ModelEvent.EscalationRequested
+                            && !emitter.started())
+                    .doOnNext(event -> handle(event, tier, prompt, guard, escalated))
+                    .blockLast();
+            if (progress.clientGone()) {
+                throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
+            }
+            if (deadline.hit()) {
+                throw new AnswerAbortedException(AnswerAbortedException.Reason.MODEL_DEADLINE);
+            }
+            if (escalated.get()) {
+                return true;
+            }
+            guard.finish().forEach(emitter::accepted);
+            emitter.finish();
+            return false;
+        }
+
+        private void handle(
+                ModelEvent event, ModelTier tier, Prompt prompt, AnswerGuard guard, AtomicBoolean escalated) {
+            switch (event) {
+                case ModelEvent.TextDelta delta -> guard.accept(delta.text()).forEach(emitter::accepted);
+                case ModelEvent.EscalationRequested ignored -> {
+                    if (prompt.allowEscalation() && !emitter.started()) {
+                        escalated.set(true);
+                    } else {
+                        // Sem o motivo: ele é texto do modelo.
+                        LOG.warn(
+                                "Pedido de escalada ignorado: modelo={} já tinha frase aprovada ou não podia escalar",
+                                tier);
+                    }
+                }
+                case ModelEvent.Completed ignored -> {
+                    // Nada a fazer: o finish() do guard roda depois do stream.
+                }
             }
         }
     }
 
-    /** Emite as frases aprovadas, precedidas da linha de versão de cada fonte que elas citam pela primeira vez. */
+    /** Avisos fixos que vêm logo depois do {@code metadata}: versões fora do acervo e versão inferida. */
+    private List<String> prelude(Plan plan, Retrieval found) {
+        List<String> lines = new ArrayList<>(missingNotices(plan));
+        found.capNotice().ifPresent(lines::add);
+        plan.inferred().ifPresent(v -> lines.add(INFERRED_VERSION.formatted(v)));
+        return lines;
+    }
+
+    private String languageName(Plan plan) {
+        return plan.analysis().language().map(catalog::displayName).orElse("");
+    }
+
+    /**
+     * O {@code metadata} e os avisos fixos, enviados uma vez só. No caminho FAST ficam guardados até a primeira saída
+     * aprovada, porque uma escalada antes disso troca a rota e o modelo.
+     */
+    private static final class Opening {
+        private final AnswerSink sink;
+        private final List<String> lines;
+        private AnswerMetadata metadata;
+        private boolean sent;
+
+        Opening(AnswerSink sink, AnswerMetadata metadata, List<String> lines) {
+            this.sink = sink;
+            this.metadata = metadata;
+            this.lines = List.copyOf(lines);
+        }
+
+        void send() {
+            if (!sent) {
+                sent = true;
+                sink.metadata(metadata);
+                lines.forEach(sink::text);
+            }
+        }
+
+        void escalate() {
+            AnswerMetadata m = metadata;
+            metadata = new AnswerMetadata(
+                    m.conversationId(),
+                    Route.STRONG_MODEL,
+                    Optional.of(ModelTier.STRONG),
+                    m.topScore(),
+                    m.citations(),
+                    m.versionUsed(),
+                    m.unreviewedSources(),
+                    m.droppedSentences(),
+                    m.timingsMillis(),
+                    m.consulted());
+        }
+
+        AnswerMetadata metadata() {
+            return metadata;
+        }
+    }
+
+    /** Prazo total do modelo, contado uma vez para a resposta inteira (inclusive a escalada). */
+    private static final class Deadline implements AutoCloseable {
+        private final Sinks.One<Boolean> reached = Sinks.one();
+        private final AtomicBoolean hit = new AtomicBoolean();
+        private final Disposable timer;
+
+        Deadline(Duration timeout) {
+            this.timer = Mono.delay(timeout).subscribe(tick -> {
+                hit.set(true);
+                reached.tryEmitValue(Boolean.TRUE);
+            });
+        }
+
+        Mono<Boolean> reached() {
+            return reached.asMono();
+        }
+
+        boolean hit() {
+            return hit.get();
+        }
+
+        @Override
+        public void close() {
+            timer.dispose();
+        }
+    }
+
+    /**
+     * Emite as saídas aprovadas, precedidas do {@code metadata} (na primeira) e da linha de versão de cada fonte que
+     * elas citam pela primeira vez, e guarda essas fontes para o {@code documentacaoConsultada} do {@code done}.
+     *
+     * <p>Numa comparação, versão sem trecho ganha do código a linha "A documentação do Java 17 disponível não menciona
+     * isso." na posição dela: logo antes da primeira frase que cita um grupo posterior a ela, ou no fim, antes do
+     * {@code done}, se nenhum grupo posterior for citado. Assim a resposta continua na ordem das versões.
+     */
     private final class Emitter {
         private final AnswerSink sink;
+        private final Opening opening;
         private final List<ScoredChunk> chunks;
+        private final int[] groupOfChunk;
+        private final List<Pending> pending = new ArrayList<>();
         private final Set<String> announced = new HashSet<>();
+        private final List<ConsultedSource> consulted = new ArrayList<>();
+        private boolean started;
 
-        Emitter(AnswerSink sink, List<ScoredChunk> chunks) {
+        private record Pending(int group, String line) {}
+
+        Emitter(
+                AnswerSink sink,
+                Opening opening,
+                List<ScoredChunk> chunks,
+                List<VersionContext> groups,
+                String languageName) {
             this.sink = sink;
+            this.opening = opening;
             this.chunks = chunks;
+            this.groupOfChunk = new int[chunks.size()];
+            int next = 0;
+            for (int g = 0; g < groups.size(); g++) {
+                VersionContext group = groups.get(g);
+                for (int k = 0; k < group.chunks().size(); k++) {
+                    groupOfChunk[next++] = g;
+                }
+                if (group.chunks().isEmpty() && !group.internal() && group.searched()) {
+                    pending.add(new Pending(g, NOT_MENTIONED.formatted(languageName + " " + group.version())));
+                }
+            }
+        }
+
+        /** Já saiu alguma frase ou bloco aprovado (daí em diante, escalada não vale mais). */
+        boolean started() {
+            return started;
         }
 
         void accepted(String text) {
+            started = true;
+            opening.send();
             for (int n : AnswerGuard.citationsIn(text)) {
                 if (n >= 1 && n <= chunks.size()) {
-                    String line = CONSULTED.formatted(label(chunks.get(n - 1).chunk()));
+                    flushPendingBefore(groupOfChunk[n - 1]);
+                    Chunk chunk = chunks.get(n - 1).chunk();
+                    String line = CONSULTED.formatted(label(chunk));
                     if (announced.add(line)) {
                         sink.text(line);
+                        consulted.add(consultedSource(chunk));
                     }
                 }
             }
             sink.text(text);
+        }
+
+        /** Fim da resposta: o que ainda estiver pendente sai agora, antes do {@code done}. */
+        void finish() {
+            opening.send();
+            flushPendingBefore(Integer.MAX_VALUE);
+        }
+
+        private void flushPendingBefore(int group) {
+            while (!pending.isEmpty() && pending.get(0).group() < group) {
+                sink.text(pending.remove(0).line());
+            }
+        }
+
+        List<ConsultedSource> consulted() {
+            return List.copyOf(consulted);
         }
     }
 
@@ -304,6 +657,14 @@ public final class AnswerService {
             return chunk.language() + " (interna)";
         }
         return catalog.displayName(chunk.language()) + " " + chunk.version().orElse(NO_VERSION);
+    }
+
+    private ConsultedSource consultedSource(Chunk chunk) {
+        if (chunk.source() == Source.INTERNAL) {
+            return new ConsultedSource(chunk.language(), chunk.language(), Optional.empty(), Source.INTERNAL);
+        }
+        return new ConsultedSource(
+                chunk.language(), catalog.displayName(chunk.language()), chunk.version(), Source.PUBLIC);
     }
 
     private List<String> missingNotices(Plan plan) {
@@ -353,7 +714,7 @@ public final class AnswerService {
         details.put("conversationId", conversationId);
         details.put("outcome", "started");
         details.put("route", route.name());
-        details.put("model", route == Route.FAST_MODEL ? ModelTier.FAST.name() : "none");
+        details.put("model", tierOf(route).map(Enum::name).orElse("none"));
         details.put(
                 "contextDocIds",
                 String.join(
@@ -365,17 +726,30 @@ public final class AnswerService {
         audit.record(new AuditEvent(AuditEventType.QUESTION_ASKED, actor, clock.instant(), details));
     }
 
-    private void recordAnswered(String actor, String conversationId, Route route, String outcome, Progress progress) {
+    /** Grava a rota e o modelo finais: depois de uma escalada, STRONG_MODEL e STRONG, com {@code escalated=true}. */
+    private void recordAnswered(String actor, String conversationId, String outcome, Progress progress) {
+        Route route = progress.route();
         Map<String, String> details = new LinkedHashMap<>();
         details.put("conversationId", conversationId);
         details.put("outcome", outcome);
         details.put("route", route.name());
+        details.put("model", tierOf(route).map(Enum::name).orElse("none"));
+        details.put("escalated", Boolean.toString(progress.escalated()));
         details.put("citedDocIds", String.join(",", progress.citedDocIds()));
         details.put("droppedSentences", Integer.toString(progress.dropped()));
         audit.record(new AuditEvent(AuditEventType.QUESTION_ANSWERED, actor, clock.instant(), details));
     }
 
-    private static AnswerMetadata withFinal(AnswerMetadata m, int dropped, Timer timer) {
+    private static Optional<ModelTier> tierOf(Route route) {
+        return switch (route) {
+            case FAST_MODEL -> Optional.of(ModelTier.FAST);
+            case STRONG_MODEL -> Optional.of(ModelTier.STRONG);
+            default -> Optional.empty();
+        };
+    }
+
+    private static AnswerMetadata withFinal(
+            AnswerMetadata m, int dropped, Timer timer, List<ConsultedSource> consulted) {
         return new AnswerMetadata(
                 m.conversationId(),
                 m.route(),
@@ -385,7 +759,8 @@ public final class AnswerService {
                 m.versionUsed(),
                 m.unreviewedSources(),
                 dropped,
-                timer.timings());
+                timer.timings(),
+                consulted);
     }
 
     private record Answered(AnswerMetadata metadata) {}
@@ -399,6 +774,9 @@ public final class AnswerService {
         private final AtomicBoolean gone = new AtomicBoolean();
         private volatile AnswerGuard guard;
         private volatile List<Citation> citations = List.of();
+        private volatile Route route = Route.NOT_DOCUMENTED;
+        private volatile boolean escalated;
+        private final AtomicInteger droppedBefore = new AtomicInteger();
 
         void close() {
             gone.set(true);
@@ -413,7 +791,29 @@ public final class AnswerService {
             return closed.asMono();
         }
 
+        void route(Route decided) {
+            this.route = decided;
+        }
+
+        Route route() {
+            return route;
+        }
+
+        void escalate() {
+            this.escalated = true;
+            this.route = Route.STRONG_MODEL;
+        }
+
+        boolean escalated() {
+            return escalated;
+        }
+
+        /** Troca o guard (a escalada começa um novo); o que o anterior descartou continua na conta. */
         void start(AnswerGuard started, List<Citation> context) {
+            AnswerGuard previous = guard;
+            if (previous != null) {
+                droppedBefore.addAndGet(previous.dropped());
+            }
             this.citations = context;
             this.guard = started;
         }
@@ -435,7 +835,7 @@ public final class AnswerService {
 
         int dropped() {
             AnswerGuard current = guard;
-            return current == null ? 0 : current.dropped();
+            return droppedBefore.get() + (current == null ? 0 : current.dropped());
         }
     }
 

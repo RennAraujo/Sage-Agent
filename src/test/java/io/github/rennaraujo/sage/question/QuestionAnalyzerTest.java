@@ -37,6 +37,15 @@ class QuestionAnalyzerTest {
     }
 
     @Test
+    void mixedComparisonWithArticleAfterConnector() {
+        QuestionAnalysis a = analyze("isso mudou do java 17 para o 21 no portal x?");
+        assertThat(a.sources()).containsExactlyInAnyOrder(Source.PUBLIC, Source.INTERNAL);
+        assertThat(a.versions()).containsExactly("17", "21");
+        assertThat(a.type()).isEqualTo(QuestionType.COMPARISON);
+        assertThat(a.mixed()).isTrue();
+    }
+
+    @Test
     void jdkGluedToNumber() {
         QuestionAnalysis a = analyze("o que mudou no jdk21");
         assertThat(a.language()).contains("java");

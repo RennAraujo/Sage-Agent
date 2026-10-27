@@ -46,7 +46,25 @@ public final class Retriever {
         return reranker.isPresent();
     }
 
+    /** Quantos trechos uma busca devolve por padrão ({@code sage.retrieval.context-chunks}). */
+    public int contextChunks() {
+        return properties.contextChunks();
+    }
+
+    /** Teto de trechos somados numa comparação com busca por versão ({@code sage.retrieval.comparison-max-chunks}). */
+    public int comparisonMaxChunks() {
+        return properties.comparisonMaxChunks();
+    }
+
     public List<ScoredChunk> retrieve(String query, SearchFilter filter) {
+        return retrieve(query, filter, properties.contextChunks());
+    }
+
+    /**
+     * Como {@link #retrieve(String, SearchFilter)}, devolvendo até {@code limit} trechos. A comparação entre versões
+     * usa isto para dar a cada versão a sua parte do contexto.
+     */
+    public List<ScoredChunk> retrieve(String query, SearchFilter filter, int limit) {
         List<Chunk> candidates = index.search(query, filter, properties.candidates());
         if (candidates.isEmpty()) {
             return List.of();
@@ -54,11 +72,10 @@ public final class Retriever {
         if (reranker.isPresent()) {
             return reranker.get().rerank(query, candidates).stream()
                     .sorted(Comparator.comparingDouble(ScoredChunk::score).reversed())
-                    .limit(properties.contextChunks())
+                    .limit(limit)
                     .toList();
         }
-        return fallback(
-                query, candidates.stream().limit(properties.contextChunks()).toList());
+        return fallback(query, candidates.stream().limit(limit).toList());
     }
 
     private static List<ScoredChunk> fallback(String query, List<Chunk> ordered) {

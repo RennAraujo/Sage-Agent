@@ -94,9 +94,9 @@ A resposta é `text/event-stream`. Cada evento tem um nome e um corpo JSON numa 
 
 | Evento | Quando | Corpo |
 | --- | --- | --- |
-| `metadata` | Uma vez, antes de qualquer texto. | Rota, modelo, score do melhor trecho, citações, versão usada, se há fonte não revisada, tempos até ali. |
+| `metadata` | Uma vez, antes de qualquer texto. No modelo rápido, só quando sai a primeira frase aprovada (ver abaixo). | Rota, modelo, score do melhor trecho, citações, versão usada, se há fonte não revisada, tempos até ali. |
 | `text` | Zero ou mais vezes. | `{"texto": "..."}`: uma frase já validada, um bloco de código inteiro, ou um texto fixo emitido pelo código (aviso de versão, "Documentação consultada: ...", "Não encontrei..."). |
-| `done` | Uma vez, no fim. | O mesmo formato do `metadata`, com `frasesDescartadas` e `temposMs` finais. |
+| `done` | Uma vez, no fim. | O mesmo formato do `metadata`, com `frasesDescartadas` e `temposMs` finais e mais o campo `documentacaoConsultada`. |
 | `error` | Se algo falhar depois que o stream começou. | `{"mensagem": "Não foi possível concluir a resposta. Tente de novo."}`, sempre a mesma frase. |
 
 Cada `text` é uma unidade completa. A interface pode concatenar com espaço (ou quebra de linha, para bloco de código) sem se preocupar com frase cortada no meio, porque o servidor só solta uma frase depois que ela terminou e passou pela validação de citação descrita em [seguranca.md](seguranca.md#contra-delírio). O preço é que a primeira frase aparece inteira de uma vez, não letra por letra.
@@ -134,21 +134,28 @@ data:{"texto":"```java\nList<String> nomes = pessoas.stream().map(Pessoa::nome).
 
 event:done
 data:{"conversaId":"b1c0e5d2-6a43-4f7e-9d2a-0c5e8f1b3a77","rota":"FAST_MODEL","modelo":"FAST",...,
-      "frasesDescartadas":1,"temposMs":{"analise":0,"busca":41,"modelo":1830,"total":1872}}
+      "frasesDescartadas":1,"temposMs":{"analise":0,"busca":41,"modelo":1830,"total":1872},
+      "documentacaoConsultada":[{"linguagem":"java","nome":"Java","versao":"25","fonte":"publico",
+                                 "versaoNaoInformada":false}]}
 ```
 
 O que cada campo quer dizer:
 
-- `rota`: `FAST_MODEL` (respondeu com o modelo rápido) ou `NOT_DOCUMENTED` (respondeu com texto fixo, sem chamar modelo). Os outros valores do enum (`CACHE`, `STRONG_MODEL`, `FLOW`, `WEB_FALLBACK`) ainda não são emitidos.
+- `rota`: `FAST_MODEL` (respondeu com o modelo rápido), `STRONG_MODEL` (respondeu com o modelo forte: toda comparação, ou uma pergunta que o rápido escalou) ou `NOT_DOCUMENTED` (respondeu com texto fixo, sem chamar modelo). Os outros valores do enum (`CACHE`, `FLOW`, `WEB_FALLBACK`) ainda não são emitidos.
 - `modelo`: `FAST` ou `STRONG`; ausente quando nenhum modelo foi chamado.
 - `scoreMaximo`: score do melhor trecho, de 0 a 1. Com o reranker ligado é a nota dele; sem reranker é a cobertura lexical, outra escala (ver [fluxo-de-uma-pergunta.md](fluxo-de-uma-pergunta.md)).
 - `citacoes`: os trechos enviados ao modelo, na ordem em que o texto os cita (`[1]`, `[2]`...). `versao` só aparece em documento público versionado; em documento interno, `linguagem` é o nome da aplicação. Com isso a interface mostra "[1] Java 25 · Stream > Terminal operations".
 - `versaoUsada`: a versão pública que filtrou a busca, quando foi uma só.
 - `fontesNaoRevisadas`: algum trecho enviado vem de documento que ninguém marcou como revisado.
-- `frasesDescartadas`: quantas frases (e blocos de código) o guard barrou por falta de citação válida.
+- `frasesDescartadas`: quantas frases (e blocos de código) o guard barrou. Depois de uma escalada, soma o que o guard do modelo rápido barrou antes de escalar com o que barrou no modelo forte.
 - `temposMs`: milissegundos por etapa (`analise`, `busca`, `modelo`, `total`).
+- `documentacaoConsultada` (só no `done`): as fontes que as frases aprovadas citaram, na ordem em que apareceram, uma por linguagem e versão. É a versão estruturada das linhas "Documentação consultada: ..." do texto e segue a mesma regra: trecho que foi ao modelo mas não sustentou nenhuma frase não entra, e resposta sem frase aprovada traz a lista vazia. Cada item tem `linguagem` (id da linguagem pública, ou o nome da aplicação interna), `nome` (o nome legível, "Java", "Spring Boot"), `versao`, `fonte` (`publico` ou `interno`) e `versaoNaoInformada`. Documento interno vem com `versao` nulo e `versaoNaoInformada` falso. Documento público sem versão no frontmatter vem com `versao` nulo e `versaoNaoInformada` verdadeiro; no texto ele aparece como "Documentação consultada: Java (versão não informada)".
 
-Quando a rota é `NOT_DOCUMENTED`, o `metadata` vem com `citacoes` vazio e os `text` são textos fixos: "Não encontrei isso na documentação disponível." (nenhum trecho passou do limiar) ou "Não tenho a documentação do Java 8 no acervo." (a pergunta é só sobre documentação pública e pediu uma versão que não está indexada). Numa pergunta mista (pública e interna) que pede uma versão pública ausente, o aviso "Não tenho a documentação do Java 8 no acervo." sai logo depois do `metadata` e a resposta continua só com a documentação interna.
+As linhas "Documentação consultada: ..." são eventos `text` comuns, emitidos pelo código e não pelo modelo. Cada uma sai imediatamente antes da primeira frase aprovada que cita um trecho daquela fonte, então numa comparação a sequência fica "Documentação consultada: Java 17", frases do 17, "Documentação consultada: Java 21", frases do 21. Uma fonte aparece uma vez só, mesmo que seja citada de novo depois. Quem quiser montar o rodapé de fontes sem ler o texto usa `documentacaoConsultada` do `done`.
+
+No caminho do modelo rápido, o `metadata` e os avisos fixos que vêm logo depois dele ("Considerei a versão 25...", "Não tenho a documentação...") só saem com a primeira frase (ou bloco) que o guard aprovar, ou no fim da resposta se nada for aprovado. Até ali o modelo ainda pode pedir escalada para o modelo forte, e o `metadata` já sai com a rota e o modelo que de fato responderam. Na prática o atraso é o tempo até a primeira frase completa do Haiku. Se o modelo falhar antes disso, o `metadata` sai mesmo assim (com o `conversaId`), seguido do `error`.
+
+Quando a rota é `NOT_DOCUMENTED`, o `metadata` vem com `citacoes` vazio e os `text` são textos fixos: "Não encontrei isso na documentação disponível." (nenhum trecho passou do limiar) ou "Não tenho a documentação do Java 8 no acervo." (a pergunta é só sobre documentação pública e pediu uma versão que não está indexada). Numa pergunta mista (pública e interna) que pede uma versão pública ausente, o aviso "Não tenho a documentação do Java 8 no acervo." sai logo depois do `metadata` e a resposta continua só com a documentação interna. Numa comparação entre versões ("isso existe no java 25 ou é exclusivo do java 8?"), a versão ausente recebe o mesmo aviso e a resposta segue com as que existem, pela rota `STRONG_MODEL`; só quando nenhuma das versões pedidas existe a rota é `NOT_DOCUMENTED`. Versão que existe mas não trouxe nenhum trecho acima do limiar de relevância recebe do código "A documentação do Java 17 disponível não menciona isso.". Essa linha sai na posição da versão na resposta: logo antes da primeira frase que cita uma versão posterior a ela, ou no fim, antes do `done`, se nenhuma posterior for citada. Numa comparação mista ("isso mudou do java 17 para o 21 na nossa app X?"), a documentação interna entra como mais um grupo, depois das versões. São buscados no máximo 4 grupos (`sage.retrieval.comparison-max-chunks` / 2, contando o interno); com mais versões pedidas, logo depois do `metadata` sai "Comparei só as versões Java 8, Java 11, Java 17 e Java 21; peça as demais em outra pergunta.", e as versões de fora não recebem "não menciona".
 
 Respostas de erro, todas `application/problem+json` e antes de o stream abrir:
 
@@ -162,9 +169,9 @@ Respostas de erro, todas `application/problem+json` e antes de o stream abrir:
 
 A ordem das verificações é índice, modelo e limite: um 503 não gasta a cota da chave.
 
-Cada pergunta gera dois eventos na auditoria cifrada. `QUESTION_ASKED` é gravado antes de qualquer evento SSE, com o id da conversa, a rota e os ids dos documentos enviados ao modelo; se essa gravação falhar, o cliente recebe só um `error` e nada da resposta é transmitido. `QUESTION_ANSWERED` é gravado no fim com o desfecho (`completed`, `interrupted` ou `failed`), os ids dos documentos efetivamente citados até ali e o número de frases descartadas; numa resposta completa ele é gravado antes do `done`, e se falhar o cliente recebe `error` no lugar do `done`. Nenhum dos dois leva o texto da pergunta ou da resposta.
+Cada pergunta gera dois eventos na auditoria cifrada. `QUESTION_ASKED` é gravado antes de qualquer evento SSE, com o id da conversa, a rota e os ids dos documentos enviados ao modelo; se essa gravação falhar, o cliente recebe só um `error` e nada da resposta é transmitido. `QUESTION_ANSWERED` é gravado no fim com o desfecho (`completed`, `interrupted` ou `failed`), a rota e o modelo finais (depois de uma escalada, `STRONG_MODEL` e `STRONG`, com `escalated=true`), os ids dos documentos efetivamente citados até ali e o número de frases descartadas; numa resposta completa ele é gravado antes do `done`, e se falhar o cliente recebe `error` no lugar do `done`. Nenhum dos dois leva o texto da pergunta ou da resposta.
 
-Toda resposta termina com `done` ou com `error`. O modelo tem um prazo total, `sage.models.timeout` (50 s), contado do pedido ao último token: um modelo que manda um pedaço a cada segundo também é cortado. Se ele falhar ou estourar o prazo depois que o stream começou, o cliente recebe um `error` e o stream fecha; as frases já enviadas continuam válidas. O SSE fica aberto por `sage.questions.preparation-timeout` (10 s, o orçamento de análise, busca e auditoria) mais o prazo do modelo, então o `error` do serviço chega antes de o stream expirar sozinho. Se o cliente fechar a conexão, o Sage cancela a chamada ao modelo na hora, para o Bedrock parar de gerar (e de cobrar) tokens que ninguém vai ler.
+Toda resposta termina com `done` ou com `error`. O modelo tem um prazo total, `sage.models.timeout` (50 s), contado do pedido ao último token: um modelo que manda um pedaço a cada segundo também é cortado. Quando o modelo rápido escala, o prazo é o mesmo para as duas chamadas somadas. Se ele falhar ou estourar o prazo depois que o stream começou, o cliente recebe um `error` e o stream fecha; as frases já enviadas continuam válidas. O SSE fica aberto por `sage.questions.preparation-timeout` (10 s, o orçamento de análise, busca e auditoria) mais o prazo do modelo, então o `error` do serviço chega antes de o stream expirar sozinho. Se o cliente fechar a conexão, o Sage cancela a chamada ao modelo na hora, para o Bedrock parar de gerar (e de cobrar) tokens que ninguém vai ler.
 
 ## Documentos
 

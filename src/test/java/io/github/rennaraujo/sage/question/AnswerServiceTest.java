@@ -54,7 +54,7 @@ class AnswerServiceTest {
     private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-27T12:00:00Z"), ZoneOffset.UTC);
     private static final ModelProperties MODELS =
             new ModelProperties("haiku-id", "sonnet-id", 1500, 0.0, Duration.ofSeconds(30));
-    private static final RetrievalProperties RETRIEVAL = new RetrievalProperties(1500, 20, 5, 0.35, 0.0);
+    private static final RetrievalProperties RETRIEVAL = new RetrievalProperties(1500, 20, 5, 0.35, 0.0, 8);
 
     private final SearchIndex index = mock(SearchIndex.class);
     private final Retriever retriever = mock(Retriever.class);
@@ -103,7 +103,7 @@ class AnswerServiceTest {
         assertThat(finalMeta.droppedSentences()).isZero();
         assertThat(finalMeta.timingsMillis()).containsKeys("analise", "busca", "modelo", "total");
         assertThat(model.tiers()).containsExactly(ModelTier.FAST);
-        assertThat(model.prompts().get(0).allowEscalation()).isFalse();
+        assertThat(model.prompts().get(0).allowEscalation()).isTrue();
 
         List<AuditEvent> events = auditEvents(2);
         AuditEvent asked = events.get(0);
@@ -397,6 +397,48 @@ class AnswerServiceTest {
         service(model).answer(new AnswerRequest("como usar streams?", Optional.empty(), ACTOR), sink);
 
         assertThat(sink.events).contains("text:Documentação consultada: Java (versão não informada)");
+    }
+
+    @Test
+    void doneListsConsultedSourcesLikeTheTextLines() {
+        Chunk unversioned = new Chunk(
+                "u1",
+                DocumentId.of("publico/java/geral/streams.md"),
+                Source.PUBLIC,
+                "java",
+                Optional.empty(),
+                "Streams",
+                "texto",
+                0,
+                true);
+        Chunk internal = new Chunk(
+                "i1",
+                DocumentId.of("interno/portal-x/faturamento.md"),
+                Source.INTERNAL,
+                "portal-x",
+                Optional.empty(),
+                "Faturamento",
+                "texto",
+                0,
+                true);
+        when(retriever.retrieve(anyString(), any()))
+                .thenReturn(List.of(
+                        chunk("publico/java/21/streams.md", "Streams", 0.9, true),
+                        new ScoredChunk(unversioned, 0.8),
+                        new ScoredChunk(internal, 0.7),
+                        chunk("publico/java/21/colecoes.md", "Coleções", 0.6, true)));
+        FakeLanguageModel model = new FakeLanguageModel("A [3]. B [1]. C [2]. D [4].");
+
+        service(model).answer(new AnswerRequest("como usar streams?", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.metadata.get(0).consulted()).isEmpty();
+        assertThat(sink.metadata.get(1).consulted())
+                .containsExactly(
+                        new ConsultedSource("portal-x", "portal-x", Optional.empty(), Source.INTERNAL),
+                        new ConsultedSource("java", "Java", Optional.of("21"), Source.PUBLIC),
+                        new ConsultedSource("java", "Java", Optional.empty(), Source.PUBLIC));
+        assertThat(sink.metadata.get(1).consulted().get(2).versionUnknown()).isTrue();
+        assertThat(sink.metadata.get(1).consulted().get(0).versionUnknown()).isFalse();
     }
 
     @Test

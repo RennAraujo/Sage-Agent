@@ -171,7 +171,7 @@ class QuestionController {
 
         @Override
         public void done(AnswerMetadata finalMetadata) {
-            send("done", payload(finalMetadata));
+            send("done", donePayload(finalMetadata));
         }
 
         private void send(String name, Object data) {
@@ -196,6 +196,29 @@ class QuestionController {
         out.put("fontesNaoRevisadas", m.unreviewedSources());
         out.put("frasesDescartadas", m.droppedSentences());
         out.put("temposMs", m.timingsMillis());
+        return out;
+    }
+
+    /**
+     * O {@code done} leva tudo do {@code metadata} mais {@code documentacaoConsultada}: as fontes citadas, na ordem em
+     * que as linhas "Documentação consultada" apareceram. Trecho público sem versão vem com {@code versao} nulo e
+     * {@code versaoNaoInformada} verdadeiro, o equivalente estruturado de "(versão não informada)".
+     */
+    static Map<String, Object> donePayload(AnswerMetadata m) {
+        Map<String, Object> out = payload(m);
+        out.put(
+                "documentacaoConsultada",
+                m.consulted().stream().map(QuestionController::consulted).toList());
+        return out;
+    }
+
+    private static Map<String, Object> consulted(ConsultedSource source) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("linguagem", source.language());
+        out.put("nome", source.name());
+        out.put("versao", source.version().orElse(null));
+        out.put("fonte", source.source().label());
+        out.put("versaoNaoInformada", source.versionUnknown());
         return out;
     }
 

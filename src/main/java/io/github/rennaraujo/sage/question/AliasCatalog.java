@@ -45,9 +45,12 @@ public class AliasCatalog {
     private static final Pattern SPACES = Pattern.compile("\\s+");
     private static final Duration RETRY_BACKOFF = Duration.ofSeconds(5);
     private static final Logger LOG = LoggerFactory.getLogger(AliasCatalog.class);
-    /** Conector de comparação seguido de versão; roda sobre texto normalizado (sem acento, minúsculo). */
+    /**
+     * Conector de comparação, com artigo opcional depois de "e", "ou" e "para" ("do java 17 para o 21"), seguido de
+     * versão; roda sobre texto normalizado (sem acento, minúsculo).
+     */
     private static final Pattern CHAINED =
-            Pattern.compile("\\s*(?:,|/|->|\\be\\b|\\bou\\b|\\bvs\\.?|\\bversus\\b|\\bpara\\b|\\bx\\b)\\s*"
+            Pattern.compile("\\s*(?:,|/|->|\\b(?:e|ou|para)(?:\\s+[oa])?\\b|\\bvs\\.?|\\bversus\\b|\\bx\\b)\\s*"
                     + "(\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?|\\d{1,2}(?!\\d|\\.\\d))");
     /** Número seguido de substantivo contável ("3 passos") é quantidade, não versão. */
     private static final Pattern COUNTED = Pattern.compile("\\s+(?:passos?|vezes|itens?|items?|minutos?|segundos?|"

@@ -20,10 +20,12 @@ class RetrieverTest {
     private static final int DOCS = 12;
     private static final int CONTEXT = 5;
     private static final int CANDIDATES = 8;
+    private static final int COMPARISON_MAX = 8;
     /** O limiar de rota da Task 11 (sage.retrieval.min-score). */
     private static final double MIN_SCORE = 0.35;
 
-    private final RetrievalProperties properties = new RetrievalProperties(1500, CANDIDATES, CONTEXT, MIN_SCORE, 0.0);
+    private final RetrievalProperties properties =
+            new RetrievalProperties(1500, CANDIDATES, CONTEXT, MIN_SCORE, 0.0, COMPARISON_MAX);
     private LuceneSearchIndex index;
 
     @BeforeEach
@@ -48,6 +50,33 @@ class RetrieverTest {
         assertThat(found).extracting(ScoredChunk::score).isSortedAccordingTo(Comparator.reverseOrder());
         assertThat(reranker.candidateCounts()).containsExactly(CANDIDATES);
         assertThat(retriever.rerankerActive()).isTrue();
+    }
+
+    @Test
+    void explicitLimitOverridesContextChunks() {
+        fill(DOCS);
+        Retriever retriever = new Retriever(index, Optional.of(new FakeReranker()), properties);
+
+        assertThat(retriever.retrieve("ordenar lista java", SearchFilter.none(), 2))
+                .hasSize(2);
+        assertThat(retriever.retrieve("ordenar lista java", SearchFilter.none(), 3))
+                .hasSize(3);
+        assertThat(retriever.contextChunks()).isEqualTo(CONTEXT);
+        assertThat(retriever.comparisonMaxChunks()).isEqualTo(COMPARISON_MAX);
+    }
+
+    @Test
+    void comparisonMaxChunksBelowFourIsRejected() {
+        try (jakarta.validation.ValidatorFactory factory =
+                jakarta.validation.Validation.buildDefaultValidatorFactory()) {
+            jakarta.validation.Validator validator = factory.getValidator();
+
+            assertThat(validator.validate(new RetrievalProperties(1500, CANDIDATES, CONTEXT, MIN_SCORE, 0.0, 3)))
+                    .extracting(v -> v.getPropertyPath().toString())
+                    .containsExactly("comparisonMaxChunks");
+            assertThat(validator.validate(new RetrievalProperties(1500, CANDIDATES, CONTEXT, MIN_SCORE, 0.0, 4)))
+                    .isEmpty();
+        }
     }
 
     @Test
