@@ -1,0 +1,22 @@
+services:
+  sage:
+    build: .
+    image: sage-agent
+    ports:
+      - "8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./data:/app/data
+    env_file: .env
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 &&
+          printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3 &&
+          grep -q "UP" <&3'
+      interval: 30s
+      timeout: 5s
+      retries: 3

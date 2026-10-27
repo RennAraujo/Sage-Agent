@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: sage-agent
+  threads:
+    virtual:
+      enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+server:
+  port: 8080
+
+# Formato texto simples. Não colocar conteúdo de documento, prompt ou resposta em MDC.
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
