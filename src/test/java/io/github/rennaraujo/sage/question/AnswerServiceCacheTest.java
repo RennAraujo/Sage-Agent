@@ -408,6 +408,7 @@ class AnswerServiceCacheTest {
                 MODELS,
                 cache,
                 conversations,
+                org.mockito.Mockito.mock(io.github.rennaraujo.sage.gap.GapRegistry.class),
                 CLOCK);
     }
 

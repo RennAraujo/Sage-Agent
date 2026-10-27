@@ -5,6 +5,7 @@ import io.github.rennaraujo.sage.audit.AuditEventType;
 import io.github.rennaraujo.sage.audit.AuditException;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.Source;
+import io.github.rennaraujo.sage.gap.GapRegistry;
 import io.github.rennaraujo.sage.question.guard.AnswerGuard;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelEvent;
@@ -95,6 +96,7 @@ public final class AnswerService {
     private final ModelProperties models;
     private final AnswerCache cache;
     private final ConversationStore conversations;
+    private final GapRegistry gaps;
     private final Clock clock;
 
     public AnswerService(
@@ -110,6 +112,7 @@ public final class AnswerService {
             ModelProperties models,
             AnswerCache cache,
             ConversationStore conversations,
+            GapRegistry gaps,
             Clock clock) {
         this.analyzer = analyzer;
         this.catalog = catalog;
@@ -123,6 +126,7 @@ public final class AnswerService {
         this.models = models;
         this.cache = cache;
         this.conversations = conversations;
+        this.gaps = gaps;
         this.clock = clock;
     }
 
@@ -190,6 +194,12 @@ public final class AnswerService {
             throw e;
         }
         recordAnswered(request.actor(), conversationId, "completed", progress);
+        // Na rota NOT_DOCUMENTED o código disse "não encontrei"/"não detalha"; no fluxo, o modelo pode ter dito o
+        // mesmo.
+        if ((route == Route.NOT_DOCUMENTED || progress.flowNotDetailed())
+                && plan.analysis().sources().contains(Source.INTERNAL)) {
+            recordGap(request);
+        }
         conversations.append(conversationId, request.actor(), plan.analysis());
         if (key.isPresent() && cacheable(answered.metadata())) {
             cache.put(key.get(), new CachedAnswer(recorder.texts(), answered.metadata()), epoch);
@@ -377,6 +387,19 @@ public final class AnswerService {
             shares[i] = total / parts + (i < total % parts ? 1 : 0);
         }
         return shares;
+    }
+
+    /**
+     * Pergunta que envolve a documentação interna e terminou em "não encontrei" (ou "não detalha esse fluxo") vira uma
+     * lacuna para os editores. Falhar aqui não derruba a resposta: o usuário já a recebeu, e a lacuna não é a auditoria
+     * (que continua fail-closed). O log leva só a classe da falha, nunca a pergunta.
+     */
+    private void recordGap(AnswerRequest request) {
+        try {
+            gaps.record(request.question(), request.actor());
+        } catch (RuntimeException e) {
+            LOG.warn("Lacuna não gravada ({})", e.getClass().getSimpleName());
+        }
     }
 
     /** Fluxo sobre a documentação interna sem trecho relevante: o código diz que o fluxo não é detalhado. */
@@ -1037,6 +1060,11 @@ public final class AnswerService {
             }
             this.citations = context;
             this.guard = started;
+        }
+
+        boolean flowNotDetailed() {
+            AnswerGuard current = guard;
+            return current != null && current.flowNotDetailed();
         }
 
         boolean modelStarted() {

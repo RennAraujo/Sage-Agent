@@ -100,3 +100,7 @@ sage:
     max-linked-docs: 3
     # Teto do texto somado de todo o contexto do modelo nesse caso. O que não cabe é cortado entre trechos.
     max-context-chars: 24000
+  gaps:
+    # Perguntas que a documentação interna não respondeu, cifradas, uma por ocorrência. Passou do teto, as mais antigas
+    # são apagadas na gravação.
+    max-entries: 5000

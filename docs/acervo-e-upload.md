@@ -46,6 +46,18 @@ O que continua vazando: o número de documentos, o tamanho de cada blob (o AES-G
 
 O mesmo vale para o armazenamento local: `sage.storage.local-dir` (padrão `data/`) tem os mesmos arquivos `docs/<uuid>`, e os testes varrem o diretório procurando um texto-canário e pedaços de id para garantir que nada apareça em claro. As chaves de blob só aceitam `[a-z0-9/-]`, sem barra inicial, o que também fecha a porta para path traversal no armazenamento em disco.
 
+## Lacunas
+
+Quando alguém pergunta algo sobre a documentação interna e o Sage responde "Não encontrei isso na documentação disponível." (ou, numa pergunta de fluxo, "A documentação não detalha esse fluxo."), a pergunta vira uma lacuna: um sinal de que falta documento, ou de que o documento existe e não cobre aquele ponto. O registro vale para perguntas internas e mistas. Pergunta só sobre documentação pública que não achou resposta não entra aqui, porque o remédio é outro (o fallback web), e resposta vinda do cache também não, para não contar duas vezes a mesma ocorrência. Numa pergunta de fluxo sobre documentação interna, também conta quando o modelo recebe contexto e responde a frase fixa "A documentação não detalha esse fluxo." sem nenhum passo aprovado pelo guard: o contexto existia, mas não cobria o fluxo. Se pelo menos um passo foi aprovado, a frase não aparece e nada é registrado.
+
+Cada ocorrência é um blob cifrado em `gaps/<uuid>`, com o mesmo envelope do resto do acervo. Dentro dele ficam a pergunta, o instante, a pergunta normalizada (minúsculas, sem acento nem pontuação, usada para agrupar) e um HMAC-SHA256 (16 caracteres hexadecimais) do nome da chave que perguntou. O segredo do HMAC é sorteado na primeira gravação e fica cifrado em `keys/gap-hmac`; um SHA-256 simples seria quebrado por dicionário, já que os nomes das chaves são poucos e previsíveis. O nome em si não é gravado, e a pergunta nunca vai para log. Como a chave do blob é só um UUID, quem olha o bucket não descobre o que as pessoas andam perguntando.
+
+Uma linha por ocorrência, em vez de um contador por pergunta, evita ler-modificar-gravar: duas perguntas iguais ao mesmo tempo não perdem uma a contagem da outra. O custo é crescimento, então há um teto, `sage.gaps.max-entries` (padrão 5000). Passou do teto, os registros mais antigos são apagados na própria gravação; se o armazém recusar o delete, o registro continua contado e a poda é refeita na gravação seguinte. Na prática isso significa que `vezes` conta só as ocorrências que ainda cabem no teto; para uma instalação pequena, 5000 blobs de poucas centenas de bytes são desprezíveis, e quem quiser histórico longo pode aumentar o valor.
+
+A lista (`GET /api/lacunas`, só `EDITOR`) agrupa pela pergunta normalizada e ordena por número de vezes e, no empate, pela mais recente. Ao subir, o Sage decifra todos os blobs de `gaps/` em segundo plano (e, se isso falhar, na primeira chamada que precisar); depois mantém o resultado em memória e só o refaz quando chega uma lacuna nova. Blob que não decifra é ignorado, com um aviso no log com a contagem.
+
+Se a gravação da lacuna falhar, a resposta ao usuário não muda: ele já recebeu o "não encontrei" e não há o que desfazer. O log registra só a classe da falha. É uma diferença deliberada em relação à auditoria, que é fail-closed: perder uma lacuna custa uma linha a menos na lista, perder um evento de auditoria custa o rastro de quem fez o quê. Como o acervo, o registro pressupõe uma única instância da aplicação.
+
 ## Configuração
 
 ```yaml
@@ -54,6 +66,8 @@ sage:
     type: local        # local | s3
     local-dir: data    # usado com type=local
     s3-bucket: ""      # obrigatório com type=s3 (variável SAGE_S3_BUCKET)
+  gaps:
+    max-entries: 5000  # teto de ocorrências de lacuna guardadas; as mais antigas saem primeiro
 ```
 
 Com `type: s3`, região e credenciais vêm da cadeia padrão da AWS, como no KMS. O bucket precisa existir; a aplicação não o cria. A escrita local é atômica (arquivo temporário no mesmo diretório e `Files.move` com `ATOMIC_MOVE`), então um corte de energia deixa o blob antigo ou o novo, nunca um arquivo pela metade.

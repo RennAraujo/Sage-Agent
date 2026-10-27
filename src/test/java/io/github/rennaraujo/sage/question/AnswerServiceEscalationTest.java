@@ -598,6 +598,7 @@ class AnswerServiceEscalationTest {
                 MODELS,
                 FakeCaches.cache(),
                 FakeCaches.conversations(),
+                org.mockito.Mockito.mock(io.github.rennaraujo.sage.gap.GapRegistry.class),
                 CLOCK);
     }
 
@@ -615,6 +616,7 @@ class AnswerServiceEscalationTest {
                 MODELS,
                 FakeCaches.cache(),
                 FakeCaches.conversations(),
+                org.mockito.Mockito.mock(io.github.rennaraujo.sage.gap.GapRegistry.class),
                 CLOCK);
     }
 

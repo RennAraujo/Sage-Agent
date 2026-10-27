@@ -3,6 +3,7 @@ package io.github.rennaraujo.sage.question;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,6 +14,7 @@ import io.github.rennaraujo.sage.audit.AuditEvent;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.Source;
+import io.github.rennaraujo.sage.gap.GapRegistry;
 import io.github.rennaraujo.sage.question.AnswerServiceTest.RecordingSink;
 import io.github.rennaraujo.sage.question.llm.FakeLanguageModel;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
@@ -46,6 +48,7 @@ class AnswerServiceFlowTest {
     private final SearchIndex index = mock(SearchIndex.class);
     private final Retriever retriever = mock(Retriever.class);
     private final AuditLog audit = mock(AuditLog.class);
+    private final GapRegistry gaps = mock(GapRegistry.class);
     private final AliasCatalog catalog =
             new AliasCatalog(new FakeCatalogs.Store(FakeCatalogs.internal("portal-x", List.of("Faturamento X"))));
     private final RecordingSink sink = new RecordingSink();
@@ -140,6 +143,66 @@ class AnswerServiceFlowTest {
     }
 
     @Test
+    void internalMissRecordsGap() {
+        when(retriever.retrieve(anyString(), any())).thenReturn(List.of());
+
+        service(mock(LanguageModel.class)).answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), sink);
+
+        verify(gaps).record(QUESTION, "leitor");
+    }
+
+    @Test
+    void gapWriteFailureDoesNotBreakTheAnswer() {
+        when(retriever.retrieve(anyString(), any())).thenReturn(List.of());
+        doThrow(new IllegalStateException("disco cheio")).when(gaps).record(anyString(), anyString());
+
+        service(mock(LanguageModel.class)).answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), sink);
+
+        assertThat(sink.events).containsExactly("metadata", "text:A documentação não detalha esse fluxo.", "done");
+    }
+
+    @Test
+    void modelSayingTheFlowIsNotDetailedRecordsGap() {
+        FakeLanguageModel model = new FakeLanguageModel("A documentação não detalha esse fluxo.");
+
+        service(model).answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), sink);
+
+        assertThat(sink.events).contains("text:A documentação não detalha esse fluxo.");
+        verify(gaps).record(QUESTION, "leitor");
+    }
+
+    @Test
+    void notDetailedPhraseAfterAnAcceptedStepRecordsNoGap() {
+        FakeLanguageModel model =
+                new FakeLanguageModel("1. Fecha no dia 5 [1].\n", "A documentação não detalha esse fluxo.\n");
+
+        service(model).answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), sink);
+
+        verifyNoInteractions(gaps);
+    }
+
+    @Test
+    void cachedReplayOfNotDetailedAnswerRecordsNoSecondGap() {
+        AnswerService service = service(new FakeLanguageModel("A documentação não detalha esse fluxo."));
+        service.answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), sink);
+        verify(gaps, times(1)).record(QUESTION, "leitor");
+
+        RecordingSink second = new RecordingSink();
+        service.answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), second);
+
+        assertThat(second.metadata.get(0).route()).isEqualTo(Route.CACHE);
+        verify(gaps, times(1)).record(anyString(), anyString());
+    }
+
+    @Test
+    void answeredQuestionRecordsNoGap() {
+        service(new FakeLanguageModel("1. Fecha no dia 5 [1].\n"))
+                .answer(new AnswerRequest(QUESTION, Optional.empty(), "leitor"), sink);
+
+        verifyNoInteractions(gaps);
+    }
+
+    @Test
     void modelSayingTheFlowIsNotDetailedGetsTheFixedText() {
         FakeLanguageModel model = new FakeLanguageModel("A documentação não detalha esse fluxo.");
 
@@ -163,6 +226,7 @@ class AnswerServiceFlowTest {
                 MODELS,
                 FakeCaches.cache(),
                 FakeCaches.conversations(),
+                gaps,
                 CLOCK);
     }
 

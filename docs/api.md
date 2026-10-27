@@ -1,6 +1,6 @@
 # API
 
-Este documento descreve o contrato HTTP do Sage: autenticação, perguntas e documentos. Os endpoints de lacunas e importação entram nas próximas tarefas e ganham seção aqui quando chegarem.
+Este documento descreve o contrato HTTP do Sage: autenticação, perguntas, documentos e lacunas. O endpoint de importação entra nas próximas tarefas e ganha seção aqui quando chegar.
 
 ## Autenticação e papéis
 
@@ -255,3 +255,18 @@ Marca ou desmarca um documento como revisado. O corpo é `{"revisado": true}` (o
 Remove o documento. Responde 204 sem corpo.
 
 Nos dois últimos, um `id` que não existe dá 404 e um `id` fora do formato dá 422. Em nenhum dos casos a resposta repete o id recebido.
+
+## Lacunas
+
+### GET /api/lacunas
+
+Só `EDITOR`. Lista as perguntas sobre a documentação interna que ficaram sem resposta ("Não encontrei isso na documentação disponível." ou "A documentação não detalha esse fluxo."), agrupadas pela pergunta normalizada: "Qual é o prazo?" e "qual e o prazo" contam como a mesma. A ordem é a de `vezes` decrescente e, no empate, `ultimaVez` decrescente.
+
+```
+[{"pergunta":"Como funciona a cobrança recorrente do portal-x?","ultimaVez":"2026-10-27T14:05:12Z","vezes":4},
+ {"pergunta":"Qual o prazo do estorno?","ultimaVez":"2026-10-26T09:30:01Z","vezes":1}]
+```
+
+`pergunta` é o texto da ocorrência mais recente do grupo, como a pessoa escreveu. `ultimaVez` é um instante em UTC. O parâmetro opcional `limite` (padrão 100, máximo 500) corta a lista; valor acima de 500 vale 500 e abaixo de 1 vale 1. Um `limite` que não é número dá 400 com `application/problem+json`. Leitor recebe 403, sem chave 401.
+
+O resumo cobre só as ocorrências ainda guardadas (`sage.gaps.max-entries`, padrão 5000), então `vezes` pode ficar abaixo do total histórico quando o teto é atingido. Mais detalhes em [Acervo e upload](acervo-e-upload.md#lacunas).

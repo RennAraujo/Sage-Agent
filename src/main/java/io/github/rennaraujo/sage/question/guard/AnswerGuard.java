@@ -100,6 +100,11 @@ public final class AnswerGuard {
         return out;
     }
 
+    /** {@code true} se a resposta acabou sendo a frase fixa de fluxo não detalhado (o modelo a deu e nada passou). */
+    public boolean flowNotDetailed() {
+        return flowNotDetailed && accepted == 0;
+    }
+
     public int dropped() {
         return dropped;
     }

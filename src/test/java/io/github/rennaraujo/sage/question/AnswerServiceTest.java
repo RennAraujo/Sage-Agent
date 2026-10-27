@@ -18,6 +18,7 @@ import io.github.rennaraujo.sage.audit.AuditException;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.Source;
+import io.github.rennaraujo.sage.gap.GapRegistry;
 import io.github.rennaraujo.sage.question.llm.FakeLanguageModel;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelEvent;
@@ -59,6 +60,7 @@ class AnswerServiceTest {
     private final SearchIndex index = mock(SearchIndex.class);
     private final Retriever retriever = mock(Retriever.class);
     private final AuditLog audit = mock(AuditLog.class);
+    private final GapRegistry gaps = mock(GapRegistry.class);
     private final AliasCatalog catalog = new AliasCatalog(new FakeCatalogs.Store());
     private final QuestionAnalyzer analyzer = new QuestionAnalyzer(catalog);
     private final RecordingSink sink = new RecordingSink();
@@ -137,6 +139,8 @@ class AnswerServiceTest {
         assertThat(sink.metadata.get(0).model()).isEmpty();
         assertThat(sink.metadata.get(0).conversationId()).isNotBlank().isNotEqualTo("c-1");
         assertThat(auditEvents(2)).extracting(e -> e.details().get("outcome")).containsExactly("started", "completed");
+        // Só documentação pública: quem trata o buraco é o fallback web, não o registro de lacunas internas.
+        verifyNoInteractions(gaps);
     }
 
     @Test
@@ -172,6 +176,31 @@ class AnswerServiceTest {
         verify(retriever).retrieve(anyString(), filter.capture());
         assertThat(filter.getValue().versions()).containsExactly("25");
         assertThat(filter.getValue().language()).contains("java");
+    }
+
+    @Test
+    void publicFlowQuestionWhoseAnswerIsNotDetailedRecordsNoGap() {
+        when(retriever.retrieve(anyString(), any()))
+                .thenReturn(List.of(chunk("publico/java/21/streams.md", "Streams", 0.92, true)));
+
+        service(new FakeLanguageModel("A documentação não detalha esse fluxo."))
+                .answer(new AnswerRequest("como funciona o stream no java 21?", Optional.empty(), ACTOR), sink);
+
+        verifyNoInteractions(gaps);
+    }
+
+    @Test
+    void mixedQuestionWithoutInternalContextRecordsGap() {
+        AliasCatalog mixedCatalog =
+                new AliasCatalog(new FakeCatalogs.Store(FakeCatalogs.internal("portal-x", List.of())));
+        when(retriever.retrieve(anyString(), any())).thenReturn(List.of());
+        String question = "faturamento do portal x no java 21";
+
+        service(mock(LanguageModel.class), new QuestionAnalyzer(mixedCatalog), MODELS, mixedCatalog)
+                .answer(new AnswerRequest(question, Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.metadata.get(0).route()).isEqualTo(Route.NOT_DOCUMENTED);
+        verify(gaps).record(question, ACTOR);
     }
 
     @Test
@@ -472,6 +501,7 @@ class AnswerServiceTest {
         service(model, new QuestionAnalyzer(mixedCatalog), MODELS, mixedCatalog)
                 .answer(new AnswerRequest("faturamento do portal x no java 8", Optional.empty(), ACTOR), sink);
 
+        verifyNoInteractions(gaps);
         assertThat(sink.events)
                 .containsExactly(
                         "metadata",
@@ -510,6 +540,7 @@ class AnswerServiceTest {
                 models,
                 FakeCaches.cache(),
                 FakeCaches.conversations(),
+                gaps,
                 CLOCK);
     }
 
@@ -527,6 +558,7 @@ class AnswerServiceTest {
                 MODELS,
                 FakeCaches.cache(),
                 FakeCaches.conversations(),
+                gaps,
                 CLOCK);
     }
 
