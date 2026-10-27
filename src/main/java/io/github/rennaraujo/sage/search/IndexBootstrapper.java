@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 
 /**
  * Monta o índice na subida (numa virtual thread, depois de {@link ApplicationReadyEvent}) e o mantém em dia a cada
@@ -48,6 +49,7 @@ public final class IndexBootstrapper {
     }
 
     @EventListener
+    @Order(0)
     public void onSaved(DocumentSavedEvent event) {
         Document doc = event.document();
         if (readiness.isReady()) {
@@ -61,6 +63,7 @@ public final class IndexBootstrapper {
     }
 
     @EventListener
+    @Order(0)
     public void onDeleted(DocumentDeletedEvent event) {
         if (readiness.isReady()) {
             index.remove(event.id());

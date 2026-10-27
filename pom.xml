@@ -96,6 +96,11 @@
             <version>${bucket4j.version}</version>
         </dependency>
         <dependency>
+            <!-- Cache de respostas e de conversas, só em memória; a versão vem do BOM do Spring Boot. -->
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.apache.tika</groupId>
             <artifactId>tika-core</artifactId>
             <version>${tika.version}</version>

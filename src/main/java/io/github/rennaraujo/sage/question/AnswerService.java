@@ -31,7 +31,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
-import java.util.UUID;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -93,6 +93,8 @@ public final class AnswerService {
     private final LanguageModel languageModel;
     private final AuditLog audit;
     private final ModelProperties models;
+    private final AnswerCache cache;
+    private final ConversationStore conversations;
     private final Clock clock;
 
     public AnswerService(
@@ -106,6 +108,8 @@ public final class AnswerService {
             LanguageModel languageModel,
             AuditLog audit,
             ModelProperties models,
+            AnswerCache cache,
+            ConversationStore conversations,
             Clock clock) {
         this.analyzer = analyzer;
         this.catalog = catalog;
@@ -117,6 +121,8 @@ public final class AnswerService {
         this.languageModel = languageModel;
         this.audit = audit;
         this.models = models;
+        this.cache = cache;
+        this.conversations = conversations;
         this.clock = clock;
     }
 
@@ -125,15 +131,36 @@ public final class AnswerService {
         return languageModel.available();
     }
 
-    public void answer(AnswerRequest request, AnswerSink sink) {
+    public void answer(AnswerRequest request, AnswerSink original) {
+        // Primeira coisa: uma invalidação durante a análise ou a busca tem de impedir esta resposta de entrar no cache.
+        long epoch = cache.epoch();
         Timer timer = new Timer();
         Progress progress = new Progress();
-        sink.onClose(progress::close);
-        String conversationId =
-                request.conversationId().orElseGet(() -> UUID.randomUUID().toString());
+        original.onClose(progress::close);
+        // Conversa desconhecida ou expirada vira conversa nova, com id novo gerado aqui: o cliente nunca escolhe o id.
+        Optional<QuestionAnalysis> previous =
+                request.conversationId().flatMap(id -> conversations.last(id, request.actor()));
+        String conversationId = previous.isPresent() ? request.conversationId().get() : conversations.newConversation();
 
-        Plan plan = plan(request.question());
+        Plan plan = plan(request.question(), previous);
         timer.lap("analise");
+        // Só a primeira pergunta de uma conversa usa o cache; uma continuação depende do contexto anterior.
+        Optional<CacheKey> key =
+                request.conversationId().isEmpty() ? Optional.of(cacheKey(request, plan)) : Optional.empty();
+        Optional<CachedAnswer> hit = key.flatMap(cache::get);
+        if (hit.isPresent()) {
+            replay(
+                    request,
+                    hit.get(),
+                    conversationId,
+                    timer,
+                    progress,
+                    original,
+                    () -> conversations.append(conversationId, request.actor(), plan.analysis()));
+            return;
+        }
+        Recorder recorder = new Recorder(original);
+        AnswerSink sink = key.isPresent() ? recorder : original;
         Retrieval found = retrieve(request.question(), plan);
         List<ScoredChunk> chunks = found.chunks();
         timer.lap("busca");
@@ -163,6 +190,10 @@ public final class AnswerService {
             throw e;
         }
         recordAnswered(request.actor(), conversationId, "completed", progress);
+        conversations.append(conversationId, request.actor(), plan.analysis());
+        if (key.isPresent() && cacheable(answered.metadata())) {
+            cache.put(key.get(), new CachedAnswer(recorder.texts(), answered.metadata()), epoch);
+        }
         sink.done(answered.metadata());
         LOG.info(
                 "Pergunta respondida: rota={} modelo={} escalada={} topScore={} trechos={} descartadas={} tempos={} "
@@ -226,8 +257,8 @@ public final class AnswerService {
         }
     }
 
-    private Plan plan(String question) {
-        QuestionAnalysis analysis = analyzer.analyze(question, Optional.empty());
+    private Plan plan(String question, Optional<QuestionAnalysis> previous) {
+        QuestionAnalysis analysis = analyzer.analyze(question, previous);
         boolean comparison = analysis.type() == QuestionType.COMPARISON;
         // Comparação sem versão ("em qual versão foi introduzido?") precisa de todas as versões, não só da última.
         Optional<String> inferred = comparison ? Optional.empty() : inferVersion(analysis);
@@ -750,34 +781,184 @@ public final class AnswerService {
     }
 
     private void recordAsked(String actor, String conversationId, Route route, List<ScoredChunk> chunks) {
+        recordAskedDocs(
+                actor,
+                conversationId,
+                route,
+                chunks.stream()
+                        .map(c -> c.chunk().documentId().value())
+                        .distinct()
+                        .toList());
+    }
+
+    private void recordAskedDocs(String actor, String conversationId, Route route, List<String> contextDocIds) {
         Map<String, String> details = new LinkedHashMap<>();
         details.put("conversationId", conversationId);
         details.put("outcome", "started");
         details.put("route", route.name());
         details.put("model", tierOf(route).map(Enum::name).orElse("none"));
-        details.put(
-                "contextDocIds",
-                String.join(
-                        ",",
-                        chunks.stream()
-                                .map(c -> c.chunk().documentId().value())
-                                .distinct()
-                                .toList()));
+        details.put("contextDocIds", String.join(",", contextDocIds));
         audit.record(new AuditEvent(AuditEventType.QUESTION_ASKED, actor, clock.instant(), details));
     }
 
     /** Grava a rota e o modelo finais: depois de uma escalada, STRONG_MODEL e STRONG, com {@code escalated=true}. */
     private void recordAnswered(String actor, String conversationId, String outcome, Progress progress) {
-        Route route = progress.route();
+        recordAnswered(
+                actor,
+                conversationId,
+                outcome,
+                progress.route(),
+                progress.escalated(),
+                progress.citedDocIds(),
+                progress.dropped());
+    }
+
+    private void recordAnswered(
+            String actor,
+            String conversationId,
+            String outcome,
+            Route route,
+            boolean escalated,
+            List<String> citedDocIds,
+            int dropped) {
         Map<String, String> details = new LinkedHashMap<>();
         details.put("conversationId", conversationId);
         details.put("outcome", outcome);
         details.put("route", route.name());
         details.put("model", tierOf(route).map(Enum::name).orElse("none"));
-        details.put("escalated", Boolean.toString(progress.escalated()));
-        details.put("citedDocIds", String.join(",", progress.citedDocIds()));
-        details.put("droppedSentences", Integer.toString(progress.dropped()));
+        details.put("escalated", Boolean.toString(escalated));
+        details.put("citedDocIds", String.join(",", citedDocIds));
+        details.put("droppedSentences", Integer.toString(dropped));
         audit.record(new AuditEvent(AuditEventType.QUESTION_ANSWERED, actor, clock.instant(), details));
+    }
+
+    private CacheKey cacheKey(AnswerRequest request, Plan plan) {
+        QuestionAnalysis analysis = plan.analysis();
+        List<String> versions = plan.inferred().map(List::of).orElse(analysis.versions());
+        return new CacheKey(
+                AnswerCache.normalize(request.question()),
+                analysis.sources(),
+                analysis.language(),
+                versions,
+                analysis.type());
+    }
+
+    /**
+     * Só vai para o cache resposta concluída, com texto do modelo e sem nenhuma frase barrada pelo guard: repetir por
+     * horas uma resposta que o guard teve de podar tira do modelo a chance de acertar numa segunda tentativa.
+     * {@code NOT_DOCUMENTED} é barato de refazer e muda assim que o acervo muda.
+     */
+    private static boolean cacheable(AnswerMetadata metadata) {
+        return metadata.route() != Route.NOT_DOCUMENTED && metadata.droppedSentences() == 0;
+    }
+
+    /**
+     * Reemite uma resposta do cache: o {@code metadata} (sem as fontes consultadas, como na resposta ao vivo), os
+     * mesmos eventos {@code text} na mesma ordem e o {@code done} com {@code documentacaoConsultada}, com rota
+     * {@code CACHE}, tempos novos e o {@code conversaId} desta conversa. A auditoria vale como numa resposta normal e
+     * continua fail-closed: se {@code QUESTION_ASKED} falhar, nada é reemitido.
+     */
+    private void replay(
+            AnswerRequest request,
+            CachedAnswer cached,
+            String conversationId,
+            Timer timer,
+            Progress progress,
+            AnswerSink sink,
+            Runnable remember) {
+        AnswerMetadata stored = cached.metadata();
+        progress.route(Route.CACHE);
+        recordAskedDocs(
+                request.actor(),
+                conversationId,
+                Route.CACHE,
+                stored.citations().stream()
+                        .map(c -> c.documentId().value())
+                        .distinct()
+                        .toList());
+        List<String> cited = citedDocIds(cached);
+        try {
+            sink.metadata(replayed(stored, conversationId, timer.timings(), List.of()));
+            cached.sentences().forEach(sink::text);
+        } catch (RuntimeException e) {
+            try {
+                recordAnswered(request.actor(), conversationId, "interrupted", Route.CACHE, false, cited, 0);
+            } catch (AuditException auditFailure) {
+                e.addSuppressed(auditFailure);
+            }
+            throw e;
+        }
+        timer.total();
+        AnswerMetadata done = replayed(stored, conversationId, timer.timings(), stored.consulted());
+        recordAnswered(request.actor(), conversationId, "completed", Route.CACHE, false, cited, 0);
+        remember.run();
+        sink.done(done);
+        LOG.info(
+                "Pergunta respondida: rota=CACHE modelo=nenhum trechos={} refs={} tempos={}",
+                stored.citations().size(),
+                stored.citations().stream().map(c -> c.documentId().logRef()).toList(),
+                done.timingsMillis());
+    }
+
+    private static List<String> citedDocIds(CachedAnswer cached) {
+        SortedSet<Integer> numbers = new TreeSet<>();
+        cached.sentences().forEach(s -> AnswerGuard.citationsIn(s).forEach(numbers::add));
+        List<Citation> citations = cached.metadata().citations();
+        return numbers.stream()
+                .filter(n -> n >= 1 && n <= citations.size())
+                .map(n -> citations.get(n - 1).documentId().value())
+                .distinct()
+                .toList();
+    }
+
+    private static AnswerMetadata replayed(
+            AnswerMetadata stored, String conversationId, Map<String, Long> timings, List<ConsultedSource> consulted) {
+        return new AnswerMetadata(
+                conversationId,
+                Route.CACHE,
+                Optional.empty(),
+                stored.topScore(),
+                stored.citations(),
+                stored.versionUsed(),
+                stored.unreviewedSources(),
+                stored.droppedSentences(),
+                timings,
+                consulted);
+    }
+
+    /** Repassa os eventos ao destino real e guarda os {@code text} na ordem, para a resposta poder ir ao cache. */
+    private static final class Recorder implements AnswerSink {
+        private final AnswerSink target;
+        private final List<String> texts = new ArrayList<>();
+
+        Recorder(AnswerSink target) {
+            this.target = target;
+        }
+
+        List<String> texts() {
+            return List.copyOf(texts);
+        }
+
+        @Override
+        public void metadata(AnswerMetadata m) {
+            target.metadata(m);
+        }
+
+        @Override
+        public void text(String sentence) {
+            texts.add(sentence);
+            target.text(sentence);
+        }
+
+        @Override
+        public void done(AnswerMetadata finalMetadata) {
+            target.done(finalMetadata);
+        }
+
+        @Override
+        public void onClose(Runnable callback) {
+            target.onClose(callback);
+        }
     }
 
     private static Optional<ModelTier> tierOf(Route route) {

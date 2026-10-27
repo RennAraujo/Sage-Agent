@@ -135,7 +135,7 @@ class AnswerServiceTest {
                 .containsExactly("metadata", "text:Não encontrei isso na documentação disponível.", "done");
         assertThat(sink.metadata.get(0).route()).isEqualTo(Route.NOT_DOCUMENTED);
         assertThat(sink.metadata.get(0).model()).isEmpty();
-        assertThat(sink.metadata.get(0).conversationId()).isEqualTo("c-1");
+        assertThat(sink.metadata.get(0).conversationId()).isNotBlank().isNotEqualTo("c-1");
         assertThat(auditEvents(2)).extracting(e -> e.details().get("outcome")).containsExactly("started", "completed");
     }
 
@@ -508,6 +508,8 @@ class AnswerServiceTest {
                 model,
                 audit,
                 models,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
                 CLOCK);
     }
 
@@ -523,6 +525,8 @@ class AnswerServiceTest {
                 model,
                 audit,
                 MODELS,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
                 CLOCK);
     }
 

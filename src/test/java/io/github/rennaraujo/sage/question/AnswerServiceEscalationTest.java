@@ -343,7 +343,7 @@ class AnswerServiceEscalationTest {
                 .isInstanceOf(IllegalStateException.class);
 
         assertThat(sink.events).containsExactly("metadata");
-        assertThat(sink.metadata.get(0).conversationId()).isEqualTo("c-9");
+        assertThat(sink.metadata.get(0).conversationId()).isNotBlank().isNotEqualTo("c-9");
         assertThat(sink.metadata.get(0).route()).isEqualTo(Route.FAST_MODEL);
         assertThat(auditEvents().get(1).details()).containsEntry("outcome", "interrupted");
     }
@@ -596,6 +596,8 @@ class AnswerServiceEscalationTest {
                 model,
                 audit,
                 MODELS,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
                 CLOCK);
     }
 
@@ -611,6 +613,8 @@ class AnswerServiceEscalationTest {
                 model,
                 audit,
                 MODELS,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
                 CLOCK);
     }
 

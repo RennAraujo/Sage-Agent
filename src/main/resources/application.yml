@@ -82,6 +82,16 @@ sage:
     # Orçamento de análise, busca e auditoria antes do modelo. O SSE fica aberto por isto mais sage.models.timeout.
     preparation-timeout: 10s
     index-retry-after: 5s
+  cache:
+    # Respostas completas em memória (nunca em disco), só para a primeira pergunta de uma conversa. Qualquer documento
+    # salvo ou apagado esvazia o cache inteiro.
+    ttl: 6h
+    max-entries: 1000
+  conversation:
+    # Últimas análises por conversa (para "e no 17?" herdar linguagem e versão); em memória, por instância.
+    ttl: 30m
+    max-turns: 5
+    max-conversations: 10000
   flow:
     # Perguntas de fluxo ("como funciona o fluxo de X"): documento interno até este tamanho entra inteiro; maior que isso,
     # entra a seção de nível 2 do melhor trecho.

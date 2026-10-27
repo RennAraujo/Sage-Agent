@@ -161,6 +161,8 @@ class AnswerServiceFlowTest {
                 model,
                 audit,
                 MODELS,
+                FakeCaches.cache(),
+                FakeCaches.conversations(),
                 CLOCK);
     }
 

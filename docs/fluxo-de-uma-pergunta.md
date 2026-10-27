@@ -154,7 +154,7 @@ O log de aplicação tem uma linha por pergunta com rota, modelo, se houve escal
 - O guard só sabe se a frase cita um trecho que existe, não se o trecho de fato sustenta o que a frase diz. Uma frase com `[1]` que distorce o trecho 1 passa.
 - Uma frase termina em quebra de linha ou em ponto, exclamação ou interrogação seguidos de espaço e de algo que começa frase (maiúscula, dígito, crase, colchete). Isso mantém "e.g. toList()", "p. ex. collect()" e "aprox. dez" inteiros, mas "aprox. 3 ms" ainda parte a frase (dígito), e uma frase seguinte que comece em minúscula gruda na anterior. Título Markdown sem citação é descartado.
 - Cada `text` é uma frase solta: a estrutura de parágrafos e listas da resposta do modelo se perde, e a interface remonta o texto como achar melhor.
-- O `conversaId` ainda não carrega contexto entre perguntas; uma pergunta de continuação ("e no 17?") é analisada sozinha.
+- O contexto da conversa (cache e continuação) vive na memória de cada instância. Com mais de uma instância atrás de um balanceador sem afinidade de sessão, "e no 17?" pode cair numa instância que não conhece o `conversaId` e ser analisada sozinha.
 - A escalada depende de o Haiku perceber que não dá conta. Se ele achar que dá e escrever uma resposta rasa, ela sai assim; o guard só garante que cada frase cita um trecho.
 - Na comparação por versão, o Sonnet pode errar a ordem ou misturar versões numa frase. A linha "Documentação consultada" e a versão em cada citação deixam isso visível, mas não impedem.
 
@@ -216,3 +216,43 @@ Um quarto passo sem `[n]` teria sido descartado e contado em `frasesDescartadas`
 - Documento ligado maior que o orçamento entra pelo começo, não pela parte mais relevante.
 - Os links são lidos do texto indexado; um link dentro de uma parte que ficou de fora (seção de nível 2 de documento grande) não é seguido.
 - O guard confere que o passo cita um trecho, não que a ordem dos passos é a da documentação.
+
+## Cache e conversa
+
+Duas perguntas iguais em sequência não precisam pagar duas vezes a busca, o reranker e o Haiku. E uma pergunta de continuação precisa saber de que se está falando. As duas coisas moram em memória, em `AnswerCache` e `ConversationStore`, e as duas são bem menos espertas do que poderiam ser de propósito.
+
+### Conversa
+
+O servidor é quem dá o `conversaId`: sem ele na requisição, gera um UUID e devolve no `metadata`. A cada pergunta, o `ConversationStore` guarda a análise (fonte, linguagem, versões, tipo) das últimas 5 perguntas daquela conversa, com validade de 30 minutos contados da última pergunta (`sage.conversation.*`). Quando a requisição traz um `conversaId` conhecido, a análise anterior vai como `previous` para o `QuestionAnalyzer`, e "e o collect?" depois de "toList no java 21" continua em Java 21 (as regras de herança estão em "Perguntas de continuação", acima).
+
+Um `conversaId` que o servidor não conhece, porque expirou, porque o processo reiniciou ou porque o cliente inventou, não vira erro: a pergunta é tratada como a primeira de uma conversa nova e o `metadata` volta com um id novo. Quem manda o id não escolhe o id; o cliente sempre deve usar o que veio na última resposta. O custo dessa escolha é que uma continuação que perdeu o contexto é respondida sem a linguagem herdada, em vez de falhar, e o usuário só percebe pela resposta. Uma conversa também pertence a quem a começou: o `ConversationStore` guarda o nome da chave de API junto das análises, e um `conversaId` apresentado por outra chave é tratado como desconhecido (mesmo comportamento, id novo). A análise só entra na conversa depois que a resposta termina (e a auditoria de `QUESTION_ANSWERED` foi gravada); uma pergunta que falhou antes disso, por índice carregando, auditoria ou limite, não deixa rastro no contexto.
+
+O estado é por processo. Com uma instância só (o caso de hoje) não há problema; com várias atrás de um balanceador sem afinidade de sessão, a continuação cai em outra instância, não acha a conversa e é analisada sozinha. Quando isso importar, o caminho é afinidade de sessão ou mover o `ConversationStore` para um Redis; nenhum dos dois está feito. O número de conversas também tem teto (`sage.conversation.max-conversations`, 10000), então um cliente que abre conversas sem parar expulsa as mais antigas em vez de encher a memória.
+
+### Cache de respostas
+
+Só a primeira pergunta de uma conversa, a que chega sem `conversaId`, passa pelo cache. Uma continuação depende do que veio antes, e a mesma frase ("e o collect?") significa coisas diferentes em conversas diferentes; ela sempre vai à busca e ao modelo.
+
+A chave é a pergunta normalizada (minúsculas, espaços colapsados, sem `?` ou `!` no fim) mais as fontes, a linguagem, as versões efetivamente usadas e o tipo da pergunta. Quando a pergunta não traz versão, a inferida (a mais recente do acervo) entra na chave no lugar dela. Isso não faz "toList no java" e "toList no java 25" compartilharem resposta, porque o texto normalizado das duas é diferente; serve para que a mesma pergunta sem versão não reaproveite uma resposta dada quando a versão mais recente era outra (e, de qualquer forma, subir a documentação de uma versão nova limpa o cache). A análise roda antes da consulta ao cache (é barata, não usa índice nem modelo); a busca, o reranker e o modelo não rodam num acerto.
+
+O que fica guardado é a sequência inteira de eventos da resposta: o `metadata` final (citações, versão usada, `documentacaoConsultada`) e todos os `text` na ordem em que saíram, inclusive os que o código emite, como "Considerei a versão 25, a mais recente disponível.", "Não tenho a documentação do Java 8 no acervo." e as linhas "Documentação consultada: ...". Isso importa por causa da regra de versão: um acerto tem de mostrar a mesma versão consultada que a resposta ao vivo mostraria, não uma frase do modelo copiada sem o aviso. A reemissão põe `rota: CACHE`, sem `modelo`, um `conversaId` novo (a conversa de quem perguntou agora) e tempos novos (`analise` e `total`; um acerto leva milissegundos). O `conversaId` do acerto também abre a conversa: "e o collect?" logo depois de uma resposta vinda do cache herda linguagem e versão normalmente.
+
+Não entram no cache:
+
+- `NOT_DOCUMENTED`: é uma resposta fixa, barata, e muda no momento em que o acervo ganha o documento que faltava.
+- Resposta que falhou ou foi interrompida (erro do modelo, prazo, cliente que saiu): não há resposta completa para repetir.
+- Resposta em que o guard descartou alguma frase. Foi uma decisão de projeto, não uma exigência: uma resposta podada tem buraco, e repeti-la por até 6 horas tira do usuário a chance de a segunda tentativa vir inteira. O custo é que perguntas em que o modelo tende a escorregar nunca ficam em cache.
+
+O cache vale 6 horas e guarda no máximo 1000 respostas (`sage.cache.*`); passando disso, o Caffeine descarta as menos usadas. Qualquer `DocumentSavedEvent` ou `DocumentDeletedEvent` esvazia o cache inteiro: invalidar só as respostas que citaram aquele documento exigiria saber, para cada entrada, de que documentos ela depende, e o ganho não paga a complexidade (um upload é raro perto de perguntas). A limpeza acontece dentro do lock do armazém de documentos e é só um `invalidateAll`. Uma resposta que começou antes do upload e terminou depois não entra no cache: o serviço lê a "época" do cache antes de buscar e o `put` descarta a gravação se ela mudou.
+
+Como o conteúdo da resposta é derivado de documentos, o cache existe só na memória do processo. Nada é serializado, nada vai para o `BlobStorage`, e nem a pergunta nem a resposta aparecem em log (a chave e a resposta têm `toString` que mostram só tamanhos). Reiniciar o Sage zera o cache; é o comportamento desejado.
+
+### Auditoria e limite de uso
+
+Um acerto de cache audita como qualquer pergunta: `QUESTION_ASKED` antes de emitir qualquer evento (com rota `CACHE` e os documentos das citações) e `QUESTION_ANSWERED` com desfecho `completed`, os documentos efetivamente citados no texto e `droppedSentences=0`. Se `QUESTION_ASKED` falhar, nada é reemitido, como no caminho normal. O limite de perguntas por minuto também vale: o controller o aplica antes de saber se haverá acerto, então repetir a mesma pergunta 21 vezes num minuto leva 429 igual.
+
+### Limites
+
+- Duas perguntas com o mesmo sentido e palavras diferentes ("como usar toList" e "uso do toList") não compartilham resposta; a normalização é só de forma, sem semântica.
+- Ao salvar ou apagar qualquer documento, todo o cache vai embora, inclusive respostas que nada tinham a ver com ele.
+- Conversa e cache são por instância e se perdem num restart.

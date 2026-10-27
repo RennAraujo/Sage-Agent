@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -135,11 +136,13 @@ public class AliasCatalog {
     }
 
     @EventListener
+    @Order(0)
     public void onSaved(DocumentSavedEvent event) {
         generation.incrementAndGet();
     }
 
     @EventListener
+    @Order(0)
     public void onDeleted(DocumentDeletedEvent event) {
         generation.incrementAndGet();
     }

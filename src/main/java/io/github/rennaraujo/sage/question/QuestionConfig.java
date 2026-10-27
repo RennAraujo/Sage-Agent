@@ -1,5 +1,6 @@
 package io.github.rennaraujo.sage.question;
 
+import com.github.benmanes.caffeine.cache.Ticker;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelProperties;
@@ -13,7 +14,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({QuestionProperties.class, FlowProperties.class})
+@EnableConfigurationProperties({
+    QuestionProperties.class,
+    FlowProperties.class,
+    CacheProperties.class,
+    ConversationProperties.class
+})
 class QuestionConfig {
 
     @Bean
@@ -33,6 +39,16 @@ class QuestionConfig {
     }
 
     @Bean
+    AnswerCache answerCache(CacheProperties properties) {
+        return new AnswerCache(properties, Ticker.systemTicker());
+    }
+
+    @Bean
+    ConversationStore conversationStore(ConversationProperties properties) {
+        return new ConversationStore(properties, Ticker.systemTicker());
+    }
+
+    @Bean
     AnswerService answerService(
             QuestionAnalyzer analyzer,
             AliasCatalog catalog,
@@ -43,7 +59,9 @@ class QuestionConfig {
             FlowContextExpander flowExpander,
             LanguageModel languageModel,
             AuditLog audit,
-            ModelProperties models) {
+            ModelProperties models,
+            AnswerCache cache,
+            ConversationStore conversations) {
         return new AnswerService(
                 analyzer,
                 catalog,
@@ -55,6 +73,8 @@ class QuestionConfig {
                 languageModel,
                 audit,
                 models,
+                cache,
+                conversations,
                 Clock.systemUTC());
     }
 }
