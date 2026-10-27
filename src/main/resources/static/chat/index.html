@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Sage · mini chat de teste</title>
+  <link rel="stylesheet" href="chat.css">
+  <script src="chat.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Sage <span class="muted">mini chat de teste</span></h1>
+    <form id="key-form" class="keybar" autocomplete="off">
+      <label for="api-key">Chave de API</label>
+      <input id="api-key" name="api-key" type="password" placeholder="sage_..." spellcheck="false" autocomplete="off">
+      <button type="submit">Guardar</button>
+      <button type="button" id="key-clear" class="secondary">Esquecer</button>
+      <span id="key-status" class="muted" role="status"></span>
+    </form>
+  </header>
+
+  <main>
+    <div class="tabs" role="tablist" aria-label="Seções">
+      <button role="tab" id="tab-perguntar" aria-controls="panel-perguntar" aria-selected="true">Perguntar</button>
+      <button role="tab" id="tab-documentos" aria-controls="panel-documentos" aria-selected="false" tabindex="-1">Documentos</button>
+      <button role="tab" id="tab-lacunas" aria-controls="panel-lacunas" aria-selected="false" tabindex="-1">Lacunas</button>
+      <button role="tab" id="tab-importar" aria-controls="panel-importar" aria-selected="false" tabindex="-1">Importar</button>
+    </div>
+
+    <section id="panel-perguntar" role="tabpanel" aria-labelledby="tab-perguntar">
+      <div id="answers" class="answers"></div>
+      <form id="ask-form" class="ask">
+        <label for="question">Pergunta</label>
+        <textarea id="question" rows="3" maxlength="2000" required placeholder="Como usar toList no Java 21?"></textarea>
+        <div class="row">
+          <button type="submit" id="ask-send">Perguntar</button>
+          <button type="button" id="ask-stop" class="secondary" hidden>Parar</button>
+          <button type="button" id="ask-new" class="secondary">Nova conversa</button>
+          <span id="ask-status" class="muted" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="panel-documentos" role="tabpanel" aria-labelledby="tab-documentos" hidden>
+      <h2>Enviar documento</h2>
+      <form id="upload-form" class="grid">
+        <div class="field wide">
+          <label for="up-file">Arquivo (md, txt, pdf, docx, html ou zip)</label>
+          <input id="up-file" type="file" required>
+        </div>
+        <div class="field">
+          <label for="up-fonte">Fonte</label>
+          <select id="up-fonte">
+            <option value="">Do frontmatter</option>
+            <option value="publico">publico</option>
+            <option value="interno">interno</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="up-linguagem">Linguagem ou aplicação</label>
+          <input id="up-linguagem" type="text" placeholder="java">
+        </div>
+        <div class="field">
+          <label for="up-versao">Versão</label>
+          <input id="up-versao" type="text" placeholder="21">
+        </div>
+        <div class="field">
+          <label for="up-secao">Seção</label>
+          <input id="up-secao" type="text">
+        </div>
+        <div class="field wide">
+          <label for="up-url">URL de origem (obrigatória em público sem frontmatter)</label>
+          <input id="up-url" type="url" placeholder="https://docs.oracle.com/...">
+        </div>
+        <div class="field wide check">
+          <input id="up-substituir" type="checkbox">
+          <label for="up-substituir">Substituir se já existir</label>
+        </div>
+        <div class="field wide row">
+          <button type="submit">Enviar</button>
+          <span id="up-status" class="muted" role="status"></span>
+        </div>
+      </form>
+      <div id="up-result" aria-live="polite"></div>
+
+      <h2>Acervo</h2>
+      <div class="row">
+        <button type="button" id="docs-refresh" class="secondary">Atualizar lista</button>
+        <label for="docs-filter" class="visually-hidden">Filtrar documentos</label>
+        <input id="docs-filter" type="search" placeholder="Filtrar por id, linguagem, versão...">
+        <span id="docs-status" class="muted" role="status"></span>
+      </div>
+      <div class="table-wrap" id="docs-table-wrap"></div>
+    </section>
+
+    <section id="panel-lacunas" role="tabpanel" aria-labelledby="tab-lacunas" hidden>
+      <h2>Lacunas da documentação interna</h2>
+      <p class="muted">Perguntas sobre documentação interna que o Sage não soube responder, agrupadas.</p>
+      <div class="row">
+        <button type="button" id="gaps-refresh">Atualizar</button>
+        <span id="gaps-status" class="muted" role="status"></span>
+      </div>
+      <div class="table-wrap" id="gaps-table-wrap"></div>
+    </section>
+
+    <section id="panel-importar" role="tabpanel" aria-labelledby="tab-importar" hidden>
+      <h2>Importar documentação pública</h2>
+      <p class="muted">Semeia o acervo a partir de uma URL raiz de um site da lista permitida. As páginas entram como não revisadas.</p>
+      <form id="import-form" class="grid">
+        <div class="field wide">
+          <label for="im-url">URL raiz</label>
+          <input id="im-url" type="url" required placeholder="https://docs.spring.io/spring-boot/reference/">
+        </div>
+        <div class="field">
+          <label for="im-linguagem">Linguagem</label>
+          <input id="im-linguagem" type="text" required placeholder="spring-boot">
+        </div>
+        <div class="field">
+          <label for="im-versao">Versão</label>
+          <input id="im-versao" type="text" required placeholder="4.1">
+        </div>
+        <div class="field">
+          <label for="im-prof">Profundidade (0 a 2)</label>
+          <input id="im-prof" type="number" min="0" max="2" value="1" required>
+        </div>
+        <div class="field wide row">
+          <button type="submit">Importar</button>
+          <span id="im-status" class="muted" role="status"></span>
+        </div>
+      </form>
+      <div id="im-result" aria-live="polite"></div>
+    </section>
+  </main>
+</body>
+</html>
