@@ -10,9 +10,10 @@ import java.util.SortedSet;
 
 /**
  * Decide o caminho da pergunta depois da busca. NOT_DOCUMENTED responde com texto fixo sem chamar modelo;
- * STRONG_MODEL (Sonnet) recebe as comparações, que pedem análise entre fontes; FAST_MODEL (Haiku) fica com o resto e
- * ainda pode escalar sozinho. O limiar vem de {@code sage.retrieval.min-score} quando o reranker está ligado e de
- * {@code min-score-without-reranker} quando não está, porque sem reranker o score é cobertura lexical, outra escala.
+ * STRONG_MODEL (Sonnet) recebe as comparações e os fluxos, que pedem análise entre fontes;
+ * FAST_MODEL (Haiku) fica com o resto e ainda pode escalar sozinho. O limiar vem de
+ * {@code sage.retrieval.min-score} quando o reranker está ligado e de {@code min-score-without-reranker} quando não
+ * está, porque sem reranker o score é cobertura lexical, outra escala.
  */
 public final class RouteDecider {
 
@@ -43,7 +44,12 @@ public final class RouteDecider {
         if (chunks.isEmpty() || topScore(chunks) < threshold) {
             return Route.NOT_DOCUMENTED;
         }
-        return analysis.type() == QuestionType.COMPARISON ? Route.STRONG_MODEL : Route.FAST_MODEL;
+        return strong(analysis.type()) ? Route.STRONG_MODEL : Route.FAST_MODEL;
+    }
+
+    /** Comparação e fluxo pedem análise entre trechos e documentos; o modelo forte responde direto. */
+    private static boolean strong(QuestionType type) {
+        return type == QuestionType.COMPARISON || type == QuestionType.FLOW;
     }
 
     /**

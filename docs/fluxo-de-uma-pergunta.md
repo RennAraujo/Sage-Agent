@@ -157,3 +157,62 @@ O log de aplicação tem uma linha por pergunta com rota, modelo, se houve escal
 - O `conversaId` ainda não carrega contexto entre perguntas; uma pergunta de continuação ("e no 17?") é analisada sozinha.
 - A escalada depende de o Haiku perceber que não dá conta. Se ele achar que dá e escrever uma resposta rasa, ela sai assim; o guard só garante que cada frase cita um trecho.
 - Na comparação por versão, o Sonnet pode errar a ordem ou misturar versões numa frase. A linha "Documentação consultada" e a versão em cada citação deixam isso visível, mas não impedem.
+
+## Perguntas de fluxo
+
+"Como funciona o fluxo de faturamento no Portal X?" é o tipo de pergunta que o trecho solto responde mal. A busca devolve cinco pedaços de 1500 caracteres, e um fluxo quase nunca cabe num deles: o passo 1 está numa seção, o passo 3 em outra, e o "depois a cobrança acontece" aponta para um documento que a busca nem trouxe. O `QuestionAnalyzer` reconhece o tipo `FLOW` por expressões como "como funciona", "qual o fluxo", "passo a passo" e "fluxo de", e a rota vai direto para o Sonnet, como na comparação: explicar um processo exige juntar partes.
+
+### Expandindo o contexto
+
+Depois da busca e da rota, o `FlowContextExpander` troca os trechos por documentos. Para cada documento interno entre os melhores trechos:
+
+- se o documento tem até `sage.flow.max-doc-chars` (12000), ele entra inteiro, como uma entrada só;
+- se for maior, entra a seção de nível 2 do melhor trecho dele ("Faturamento > Emissão", com tudo que vem abaixo), e, se nem a seção couber no limite, o melhor trecho e os vizinhos que couberem.
+
+Os wiki-links do texto que o modelo vai ver são seguidos com profundidade 1: `[[cobranca]]` resolve para `interno/<app>/cobranca.md` na mesma aplicação, `[[interno/portal-x/cobranca]]` é a forma explícita, e `[[cobranca|como cobrar]]` e `[[cobranca#prazos]]` valem como `[[cobranca]]` (apelido e título são ignorados). No máximo `sage.flow.max-linked-docs` (3) documentos entram, na ordem em que os links aparecem. Link que não resolve para um documento do índice é ignorado, e link nunca atravessa fonte (documento interno não puxa público nem o contrário) nem aplicação. Os documentos ligados não são varridos atrás de novos links.
+
+O texto somado fica sempre abaixo de `sage.flow.max-context-chars` (24000). Os documentos que a busca achou têm prioridade; um documento ligado maior que o orçamento que sobrou entra com o começo dele, cortado entre trechos (o chunker já separa por título e parágrafo, então o corte cai numa fronteira natural). A alternativa seria escolher a melhor seção do documento ligado, mas a pergunta não chega ao expander, e eu preferi não inventar um segundo ranking só para isso. Cada documento expandido é uma entrada do prompt, com o seu `[n]`, e o guard valida as citações contra esse contexto maior. A expansão só mexe no prompt: o limite de 2000 caracteres da pergunta, a busca e o reranker não a enxergam, e o `scoreMaximo` do `metadata` continua sendo o da busca. Os ids dos documentos ligados vão para `contextDocIds` na auditoria, porque foram enviados ao modelo.
+
+### Passos numerados e diagrama
+
+O prompt pede passos numerados, um por linha, cada um terminado em citação. Para o guard cada item é uma frase e precisa da sua citação: "2. Emite a nota fiscal." sem `[n]` é descartado, e a numeração segue o que sobrou (os passos 1 e 3 chegam, o 2 não). O splitter deixou de tratar o "1." do começo da linha como fim de frase; antes dessa mudança o marcador virava uma frase sem citação, que era descartada junto com a numeração.
+
+Se a documentação listar três ou mais etapas em ordem, o modelo pode acrescentar um bloco `mermaid` com `flowchart TD` logo depois do último passo. A regra do bloco de código é a de sempre: só passa se a frase imediatamente anterior foi aprovada, e cada bloco consome essa frase. Como a interface pode renderizar o diagrama, o guard recusa bloco `mermaid` que tenha uma linha começando com `click`, a palavra `href`, `javascript:`, uma diretiva `%%{...}` (que muda o nível de segurança do renderizador) ou qualquer tag HTML. Seta como `<-->` não conta como tag. Isso é uma lista de negação, não uma prova de que o diagrama é inofensivo; o renderizador ainda precisa rodar com `securityLevel: strict`.
+
+### Quando a documentação não detalha
+
+Se nenhum trecho passa do limiar numa pergunta de fluxo sobre a documentação interna, o código responde "A documentação não detalha esse fluxo." sem chamar o modelo, no lugar do texto genérico de "não encontrei". O prompt pede a mesma frase quando os documentos não descrevem o processo, e o guard a deixa passar sem citação, do mesmo jeito que faz com o "não cobre".
+
+### Exemplo
+
+Pergunta, com a documentação interna do `portal-x` indexada (`faturamento.md` aponta para `[[cobranca]]`):
+
+```
+POST /api/perguntas
+{ "pergunta": "Como funciona o fluxo de faturamento no Portal X?" }
+```
+
+O prompt recebe `faturamento.md` inteiro como `[1]` e `cobranca.md` como `[2]`. A resposta chega frase a frase:
+
+```
+metadata   rota=STRONG_MODEL, modelo=STRONG, citacoes=[1, 2]
+text       Documentação consultada: portal-x (interna)
+text       1. O fechamento acontece no dia 5 de cada mês [1].
+text       2. A nota fiscal é emitida para cada contrato ativo [1].
+text       3. A cobrança sai no dia seguinte, por boleto [2].
+text       ```mermaid
+           flowchart TD
+             A[Fechamento] --> B[Nota fiscal]
+             B --> C[Cobrança]
+           ```
+done       frasesDescartadas=0
+```
+
+Um quarto passo sem `[n]` teria sido descartado e contado em `frasesDescartadas`.
+
+### Limites
+
+- Só documentos internos são expandidos. Pergunta de fluxo sobre documentação pública continua com os trechos soltos, no Sonnet.
+- Documento ligado maior que o orçamento entra pelo começo, não pela parte mais relevante.
+- Os links são lidos do texto indexado; um link dentro de uma parte que ficou de fora (seção de nível 2 de documento grande) não é seguido.
+- O guard confere que o passo cita um trecho, não que a ordem dos passos é a da documentação.

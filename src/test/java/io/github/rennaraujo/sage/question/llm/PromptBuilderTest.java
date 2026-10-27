@@ -183,6 +183,24 @@ class PromptBuilderTest {
         assertThat(prompt.system()).contains("Java 17, Java 21").contains("origem=\"interna\"");
     }
 
+    @Test
+    void flowPromptAsksForNumberedCitedStepsAndConditionalMermaid() {
+        Prompt prompt = builder.build(
+                "como funciona o faturamento?",
+                List.of(chunk("publico/java/21/streams.md", "Streams", "texto")),
+                QuestionType.FLOW,
+                false);
+
+        assertThat(prompt.system())
+                .contains("passos numerados")
+                .contains("```mermaid")
+                .contains("flowchart TD")
+                .contains("três ou mais etapas")
+                .contains("A documentação não detalha esse fluxo.");
+        assertThat(builder.build("q", List.of(), QuestionType.LOOKUP, false).system())
+                .doesNotContain("mermaid");
+    }
+
     private static ScoredChunk versioned(String docId, String version, String text) {
         return new ScoredChunk(
                 new Chunk(

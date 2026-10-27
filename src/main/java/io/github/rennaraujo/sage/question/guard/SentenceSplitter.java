@@ -25,6 +25,7 @@ final class SentenceSplitter {
     private static final String FENCE = "```";
     private static final Pattern CITATION_AHEAD = Pattern.compile("\\[\\d+]");
     private static final Pattern PARTIAL_CITATION = Pattern.compile("\\[\\d*");
+    private static final int MAX_LIST_MARKER_DIGITS = 3;
     private static final int WAIT = -1;
     private static final int NOT_A_BOUNDARY = -2;
 
@@ -106,7 +107,7 @@ final class SentenceSplitter {
             if (c == '\n') {
                 return i;
             }
-            if (!isTerminator(c)) {
+            if (!isTerminator(c) || isListMarker(i)) {
                 continue;
             }
             if (i + 1 == buffer.length()) {
@@ -189,6 +190,30 @@ final class SentenceSplitter {
     private boolean isAllBackticks() {
         for (int i = 0; i < buffer.length(); i++) {
             if (buffer.charAt(i) != '`') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * O ponto de "1. Receba o pedido" é a numeração do item, não o fim de uma frase: só dígitos (até três) entre o
+     * começo da linha e o ponto. Sem isso o "1." viraria uma frase sem citação, descartada, e levaria a numeração.
+     */
+    private boolean isListMarker(int dot) {
+        if (buffer.charAt(dot) != '.') {
+            return false;
+        }
+        int start = dot;
+        while (start > 0 && buffer.charAt(start - 1) != '\n') {
+            start--;
+        }
+        int digits = dot - start;
+        if (digits < 1 || digits > MAX_LIST_MARKER_DIGITS) {
+            return false;
+        }
+        for (int k = start; k < dot; k++) {
+            if (!Character.isDigit(buffer.charAt(k))) {
                 return false;
             }
         }

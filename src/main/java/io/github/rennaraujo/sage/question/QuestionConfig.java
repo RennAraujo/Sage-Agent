@@ -13,7 +13,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(QuestionProperties.class)
+@EnableConfigurationProperties({QuestionProperties.class, FlowProperties.class})
 class QuestionConfig {
 
     @Bean
@@ -28,6 +28,11 @@ class QuestionConfig {
     }
 
     @Bean
+    FlowContextExpander flowContextExpander(SearchIndex index, FlowProperties properties) {
+        return new FlowContextExpander(index, properties);
+    }
+
+    @Bean
     AnswerService answerService(
             QuestionAnalyzer analyzer,
             AliasCatalog catalog,
@@ -35,6 +40,7 @@ class QuestionConfig {
             SearchIndex index,
             RouteDecider decider,
             PromptBuilder promptBuilder,
+            FlowContextExpander flowExpander,
             LanguageModel languageModel,
             AuditLog audit,
             ModelProperties models) {
@@ -45,6 +51,7 @@ class QuestionConfig {
                 index,
                 decider,
                 promptBuilder,
+                flowExpander,
                 languageModel,
                 audit,
                 models,

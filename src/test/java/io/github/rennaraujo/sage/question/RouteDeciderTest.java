@@ -151,6 +151,16 @@ class RouteDeciderTest {
                 Set.of(Source.PUBLIC), Optional.of("java"), List.of(version), QuestionType.LOOKUP, false, true);
     }
 
+    @Test
+    void flowQuestionGoesToStrongModel() {
+        RouteDecider decider = new RouteDecider(index, PROPERTIES, true);
+        QuestionAnalysis flow = new QuestionAnalysis(
+                Set.of(Source.INTERNAL), Optional.empty(), List.of(), QuestionType.FLOW, false, false);
+
+        assertThat(decider.decide(flow, List.of(scored(0.80)))).isEqualTo(Route.STRONG_MODEL);
+        assertThat(decider.decide(flow, List.of(scored(0.10)))).isEqualTo(Route.NOT_DOCUMENTED);
+    }
+
     private static ScoredChunk scored(double score) {
         Chunk chunk = new Chunk(
                 "c" + score,

@@ -89,6 +89,7 @@ public final class AnswerService {
     private final SearchIndex index;
     private final RouteDecider decider;
     private final PromptBuilder promptBuilder;
+    private final FlowContextExpander flowExpander;
     private final LanguageModel languageModel;
     private final AuditLog audit;
     private final ModelProperties models;
@@ -101,6 +102,7 @@ public final class AnswerService {
             SearchIndex index,
             RouteDecider decider,
             PromptBuilder promptBuilder,
+            FlowContextExpander flowExpander,
             LanguageModel languageModel,
             AuditLog audit,
             ModelProperties models,
@@ -111,6 +113,7 @@ public final class AnswerService {
         this.index = index;
         this.decider = decider;
         this.promptBuilder = promptBuilder;
+        this.flowExpander = flowExpander;
         this.languageModel = languageModel;
         this.audit = audit;
         this.models = models;
@@ -137,12 +140,13 @@ public final class AnswerService {
         Route route = decider.decide(plan.analysis(), chunks, plan.missing());
         progress.route(route);
 
-        recordAsked(request.actor(), conversationId, route, chunks);
+        Retrieval context = route == Route.NOT_DOCUMENTED ? found : expandFlow(plan, found);
+        recordAsked(request.actor(), conversationId, route, context.chunks());
         Answered answered;
         try {
             answered = route == Route.NOT_DOCUMENTED
                     ? notDocumented(plan, conversationId, chunks, timer, sink)
-                    : withModel(request, plan, conversationId, found, route, timer, sink, progress);
+                    : withModel(request, plan, conversationId, context, route, timer, sink, progress);
         } catch (RuntimeException e) {
             String outcome = interrupted(e, progress) ? "interrupted" : "failed";
             try {
@@ -194,11 +198,31 @@ public final class AnswerService {
         }
     }
 
+    /**
+     * Pergunta de fluxo: os trechos da busca viram documentos (ou seções) inteiros mais os documentos ligados por
+     * wiki-link. É só contexto de prompt; o {@code topScore} continua sendo o da busca, e as demais rotas não passam
+     * por aqui.
+     */
+    private Retrieval expandFlow(Plan plan, Retrieval found) {
+        if (plan.analysis().type() != QuestionType.FLOW || plan.byVersion()) {
+            return found;
+        }
+        return new Retrieval(flowExpander.expand(found.chunks()), found.groups(), found.capNotice(), found.chunks());
+    }
+
     /** Trechos da busca e, quando a busca foi por versão, os mesmos trechos agrupados por versão. */
-    private record Retrieval(List<ScoredChunk> chunks, List<VersionContext> groups, Optional<String> capNotice) {
+    private record Retrieval(
+            List<ScoredChunk> chunks,
+            List<VersionContext> groups,
+            Optional<String> capNotice,
+            List<ScoredChunk> searched) {
 
         Retrieval(List<ScoredChunk> chunks, List<VersionContext> groups) {
-            this(chunks, groups, Optional.empty());
+            this(chunks, groups, Optional.empty(), chunks);
+        }
+
+        Retrieval(List<ScoredChunk> chunks, List<VersionContext> groups, Optional<String> capNotice) {
+            this(chunks, groups, capNotice, chunks);
         }
     }
 
@@ -324,6 +348,12 @@ public final class AnswerService {
         return shares;
     }
 
+    /** Fluxo sobre a documentação interna sem trecho relevante: o código diz que o fluxo não é detalhado. */
+    private static boolean flowOnInternal(Plan plan) {
+        return plan.analysis().type() == QuestionType.FLOW
+                && plan.analysis().sources().contains(Source.INTERNAL);
+    }
+
     private Answered notDocumented(
             Plan plan, String conversationId, List<ScoredChunk> chunks, Timer timer, AnswerSink sink) {
         AnswerMetadata metadata = new AnswerMetadata(
@@ -341,7 +371,7 @@ public final class AnswerService {
         missingNotices(plan).forEach(sink::text);
         if (!plan.skipSearch()) {
             plan.inferred().ifPresent(v -> sink.text(INFERRED_VERSION.formatted(v)));
-            sink.text(NO_CONTEXT);
+            sink.text(flowOnInternal(plan) ? PromptBuilder.FLOW_NOT_DETAILED : NO_CONTEXT);
         }
         timer.total();
         return new Answered(withFinal(metadata, 0, timer, List.of()));
@@ -372,7 +402,7 @@ public final class AnswerService {
                 conversationId,
                 route,
                 Optional.of(tier),
-                RouteDecider.topScore(chunks),
+                RouteDecider.topScore(found.searched()),
                 citations,
                 plan.versionUsed(),
                 chunks.stream().anyMatch(c -> !c.chunk().reviewed()),
@@ -390,7 +420,14 @@ public final class AnswerService {
                     ? promptBuilder.buildByVersion(request.question(), languageName(plan), found.groups())
                     : promptBuilder.build(request.question(), chunks, type, tier == ModelTier.FAST);
             try (Deadline deadline = new Deadline(models.timeout())) {
-                Call call = new Call(chunks, citations, emitter, progress, deadline, type == QuestionType.COMPARISON);
+                Call call = new Call(
+                        chunks,
+                        citations,
+                        emitter,
+                        progress,
+                        deadline,
+                        type == QuestionType.COMPARISON,
+                        type == QuestionType.FLOW);
                 if (call.run(tier, prompt)) {
                     progress.escalate();
                     opening.escalate();
@@ -422,6 +459,7 @@ public final class AnswerService {
         private final Progress progress;
         private final Deadline deadline;
         private final boolean comparison;
+        private final boolean flow;
 
         Call(
                 List<ScoredChunk> chunks,
@@ -429,7 +467,9 @@ public final class AnswerService {
                 Emitter emitter,
                 Progress progress,
                 Deadline deadline,
-                boolean comparison) {
+                boolean comparison,
+                boolean flow) {
+            this.flow = flow;
             this.chunks = chunks;
             this.citations = citations;
             this.emitter = emitter;
@@ -439,7 +479,7 @@ public final class AnswerService {
         }
 
         boolean run(ModelTier tier, Prompt prompt) {
-            AnswerGuard guard = new AnswerGuard(chunks.size(), comparison);
+            AnswerGuard guard = new AnswerGuard(chunks.size(), comparison, flow);
             progress.start(guard, citations);
             if (progress.clientGone()) {
                 throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);

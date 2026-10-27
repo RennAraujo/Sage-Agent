@@ -82,3 +82,11 @@ sage:
     # Orçamento de análise, busca e auditoria antes do modelo. O SSE fica aberto por isto mais sage.models.timeout.
     preparation-timeout: 10s
     index-retry-after: 5s
+  flow:
+    # Perguntas de fluxo ("como funciona o fluxo de X"): documento interno até este tamanho entra inteiro; maior que isso,
+    # entra a seção de nível 2 do melhor trecho.
+    max-doc-chars: 12000
+    # Documentos apontados por [[wiki-link]] (profundidade 1, só da mesma aplicação) que entram no contexto.
+    max-linked-docs: 3
+    # Teto do texto somado de todo o contexto do modelo nesse caso. O que não cabe é cortado entre trechos.
+    max-context-chars: 24000

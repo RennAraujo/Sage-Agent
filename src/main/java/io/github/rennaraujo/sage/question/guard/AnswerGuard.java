@@ -52,6 +52,8 @@ public final class AnswerGuard {
     private static final Pattern ABSENCE_TEMPLATE_SHAPE =
             Pattern.compile("^a documentacao d[oa] \\S.* disponivel nao menciona (\\S.*)$");
 
+    private static final String MERMAID_TAG = "mermaid";
+
     private static final int FENCE_LENGTH = 3;
 
     private final SentenceSplitter splitter = new SentenceSplitter();
@@ -61,10 +63,12 @@ public final class AnswerGuard {
 
     private final CitationValidator validator;
     private final boolean comparison;
+    private final boolean flow;
     private final SortedSet<Integer> cited = new TreeSet<>();
     private int accepted;
     private int dropped;
     private boolean previousAccepted;
+    private boolean flowNotDetailed;
 
     public AnswerGuard(int contextSize) {
         this(contextSize, false);
@@ -72,6 +76,12 @@ public final class AnswerGuard {
 
     /** {@code comparison} liga a regra de afirmação de ausência, que só vale nas respostas de comparação. */
     public AnswerGuard(int contextSize, boolean comparison) {
+        this(contextSize, comparison, false);
+    }
+
+    /** {@code flow} libera a frase fixa de fluxo não detalhado, que só faz sentido na rota de fluxo. */
+    public AnswerGuard(int contextSize, boolean comparison, boolean flow) {
+        this.flow = flow;
         this.validator = new CitationValidator(contextSize);
         this.comparison = comparison;
     }
@@ -85,7 +95,7 @@ public final class AnswerGuard {
     public List<String> finish() {
         List<String> out = judge(splitter.flush());
         if (accepted == 0) {
-            out.add(PromptBuilder.NOT_COVERED);
+            out.add(flowNotDetailed ? PromptBuilder.FLOW_NOT_DETAILED : PromptBuilder.NOT_COVERED);
         }
         return out;
     }
@@ -109,7 +119,11 @@ public final class AnswerGuard {
         for (SentenceSplitter.Segment segment : segments) {
             String text = segment.text();
             if (segment.code()) {
-                take(out, text, previousAccepted && segment.closed() && !disguisedProse(text));
+                take(out, text, previousAccepted && segment.closed() && !disguisedProse(text) && !unsafeMermaid(text));
+                previousAccepted = false;
+            } else if (flow && PromptBuilder.FLOW_NOT_DETAILED.equals(text)) {
+                // Mesma ideia do "não cobre": é a resposta prevista para fluxo que a documentação não detalha.
+                flowNotDetailed = true;
                 previousAccepted = false;
             } else if (PromptBuilder.NOT_COVERED.equals(text)) {
                 // Resposta prevista para "não está nos documentos": o finish() a emite se nada mais passar.
@@ -133,6 +147,15 @@ public final class AnswerGuard {
         } else {
             dropped++;
         }
+    }
+
+    /** Bloco mermaid fora da lista de permissão ({@link MermaidAllowList}): a interface pode renderizá-lo. */
+    static boolean unsafeMermaid(String block) {
+        String[] lines = block.split("\n", 2);
+        if (!MERMAID_TAG.equals(fenceTag(lines[0])) || lines.length < 2) {
+            return false;
+        }
+        return !MermaidAllowList.allowed(block);
     }
 
     static boolean disguisedProse(String block) {

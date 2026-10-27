@@ -285,6 +285,129 @@ class AnswerGuardTest {
         assertThat(AnswerGuard.citationsIn("Leia `a[9]` [2] e [1].")).containsExactly(2, 1);
     }
 
+    private static final String MERMAID =
+            "```mermaid\nflowchart TD\n  A[Pedido] --> B[Nota fiscal.]\n  B --> C[Cobranca.]\n```";
+
+    @Test
+    void numberedStepsEachNeedTheirOwnCitation() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out = run(guard, "1. Receba o pedido [1].\n2. Emita a nota fiscal.\n3. Cobre o cliente [2].\n");
+
+        assertThat(out).containsExactly("1. Receba o pedido [1].", "3. Cobre o cliente [2].");
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void numberedMarkerIsNotASentenceOfItsOwn() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out = run(guard, "1. Receba o pedido [1]. 2. Emita a nota [1].");
+
+        assertThat(out).containsExactly("1. Receba o pedido [1].", "2. Emita a nota [1].");
+        assertThat(guard.dropped()).isZero();
+    }
+
+    @Test
+    void mermaidPassesAfterCitedStepAndIsNotTreatedAsProse() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        List<String> out = run(guard, "1. Receba o pedido [1].\n" + MERMAID + "\n");
+
+        assertThat(out).containsExactly("1. Receba o pedido [1].", MERMAID);
+        assertThat(guard.dropped()).isZero();
+    }
+
+    @Test
+    void mermaidWithoutACitedSentenceBeforeItIsDropped() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        assertThat(run(guard, MERMAID + "\n1. Receba o pedido [1].\n")).containsExactly("1. Receba o pedido [1].");
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void secondMermaidNeedsItsOwnCitedSentence() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        assertThat(run(guard, "1. Receba o pedido [1].\n" + MERMAID + "\n" + MERMAID + "\n"))
+                .containsExactly("1. Receba o pedido [1].", MERMAID);
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void mermaidWithClickHrefScriptOrHtmlIsDropped() {
+        for (String line : List.of(
+                "click A href \"https://evil.example\"",
+                "  CLICK A callback",
+                "A[<img src=x onerror=alert(1)>] --> B",
+                "A --> B[<b>negrito</b>]",
+                "A[\"ver\"] --> B[a href=x]",
+                "A --> B[javascript:alert(1)]",
+                "%%{init: {\"securityLevel\": \"loose\"}}%%")) {
+            AnswerGuard guard = new AnswerGuard(CONTEXT);
+            String block = "```mermaid\nflowchart TD\n" + line + "\n```";
+
+            assertThat(run(guard, "1. Receba o pedido [1].\n" + block + "\n"))
+                    .as(line)
+                    .containsExactly("1. Receba o pedido [1].");
+            assertThat(guard.dropped()).as(line).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void flowNotDetailedSentencePassesWithoutCitation() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT, false, true);
+
+        assertThat(run(guard, "A documentação não detalha esse fluxo."))
+                .containsExactly("A documentação não detalha esse fluxo.");
+        assertThat(guard.dropped()).isZero();
+    }
+
+    @Test
+    void flowNotDetailedSentenceIsOrdinaryTextOutsideTheFlowRoute() {
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        assertThat(run(guard, "A documentação não detalha esse fluxo."))
+                .containsExactly("A documentação disponível não cobre isso.");
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void mermaidAllowListDropsBypasses() {
+        for (String body : List.of(
+                "A-->B; click A call alert(1)",
+                "A-->B %%{init: {\"securityLevel\":\"loose\"}}%%",
+                "style A fill:url(javascript:alert(1))",
+                "classDef x fill:url(https://evil.example/a.png)",
+                "A[x #lt;img src=x#gt;] --> B",
+                "A[Pedido] <--> B[Nota]",
+                "A[Pedido] --> B[Nota] & C[Outra]",
+                "A --> B\nlinkStyle 0 stroke:red",
+                "A --> B\nclick A \"x\"")) {
+            AnswerGuard guard = new AnswerGuard(CONTEXT);
+            String block = "```mermaid\nflowchart TD\n" + body + "\n```";
+
+            assertThat(run(guard, "1. Receba o pedido [1].\n" + block + "\n"))
+                    .as(body)
+                    .containsExactly("1. Receba o pedido [1].");
+        }
+        AnswerGuard noHeader = new AnswerGuard(CONTEXT);
+        assertThat(run(noHeader, "1. Receba o pedido [1].\n```mermaid\nsequenceDiagram\nA->>B: oi\n```\n"))
+                .containsExactly("1. Receba o pedido [1].");
+    }
+
+    @Test
+    void mermaidAllowListAcceptsARealFlowchart() {
+        String block = "```mermaid\nflowchart TD\n  A[Receber pedido] --> B[Emitir nota fiscal]\n"
+                + "  B --> C{Cliente ativo?}\n  C -->|Sim| D((Cobrar))\n  C -.->|Não| E(Encerrar); D ==> F[Fim]\n"
+                + "  subgraph S[Etapa final]\n  F --- G[Arquivar]\n  end\n```";
+        AnswerGuard guard = new AnswerGuard(CONTEXT);
+
+        assertThat(run(guard, "1. Receba o pedido [1].\n" + block + "\n"))
+                .containsExactly("1. Receba o pedido [1].", block);
+    }
+
     private static List<String> run(AnswerGuard guard, String text) {
         List<String> out = new ArrayList<>();
         // Deltas de 3 caracteres simulam o streaming.

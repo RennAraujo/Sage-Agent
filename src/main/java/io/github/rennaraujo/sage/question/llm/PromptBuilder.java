@@ -18,6 +18,9 @@ public final class PromptBuilder {
     /** Texto fixo que o guard e o prompt compartilham. */
     public static final String NOT_COVERED = "A documentação disponível não cobre isso.";
 
+    /** Texto fixo das perguntas de fluxo quando a documentação não detalha o processo; o guard o deixa passar. */
+    public static final String FLOW_NOT_DETAILED = "A documentação não detalha esse fluxo.";
+
     /** Único jeito aceito de dizer que algo não aparece na documentação; o guard descarta as outras formas. */
     public static final String ABSENCE_TEMPLATE =
             "A documentação do <Nome> <versão> disponível não menciona <assunto>.";
@@ -59,13 +62,24 @@ public final class PromptBuilder {
             dessa versão; não conclua que o recurso não existe naquela versão, porque o acervo pode estar \
             incompleto.""";
 
+    private static final String FLOW_HINT = "\nA pergunta pede a explicação de um fluxo. Explique em passos numerados "
+            + "(\"1. \", \"2. \", ...), um passo por linha, e termine cada passo com a citação [n] do documento de "
+            + "onde ele vem. Os documentos podem ser inteiros ou seções, e alguns foram incluídos por serem ligados "
+            + "ao principal; siga a ordem em que a documentação descreve o processo. Só se a documentação listar "
+            + "três ou mais etapas em ordem, escreva depois do último passo, sem frase de introdução, um bloco "
+            + "```mermaid com `flowchart TD`: nós curtos em texto puro, sem HTML e sem click, href ou javascript. "
+            + "Se a documentação não detalhar o fluxo, responda exatamente: \"" + FLOW_NOT_DETAILED + "\"";
+
     private static final String INTERNAL_HINT = "\nOs documentos com origem=\"interna\" são da documentação interna "
             + "da aplicação. Responda sobre eles numa parte própria, depois das versões, citando-os.";
 
     public Prompt build(String question, List<ScoredChunk> context, QuestionType type, boolean allowEscalation) {
         boolean comparison = type == QuestionType.COMPARISON;
         String user = documents(context, comparison) + question(question);
-        String system = SYSTEM + (comparison ? COMPARISON_HINT : "") + (allowEscalation ? ESCALATION_HINT : "");
+        String system = SYSTEM
+                + (comparison ? COMPARISON_HINT : "")
+                + (type == QuestionType.FLOW ? FLOW_HINT : "")
+                + (allowEscalation ? ESCALATION_HINT : "");
         return new Prompt(system, user, allowEscalation);
     }
 

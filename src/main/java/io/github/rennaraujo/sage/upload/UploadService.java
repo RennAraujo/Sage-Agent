@@ -275,7 +275,7 @@ public final class UploadService {
     }
 
     /** Minúsculas, sem acento, só {@code [a-z0-9-]}. */
-    static String slug(String filename) {
+    public static String slug(String filename) {
         String ascii = DIACRITICS
                 .matcher(Normalizer.normalize(stem(filename), Normalizer.Form.NFD))
                 .replaceAll("");
