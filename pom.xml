@@ -28,6 +28,9 @@
         <jacoco.line.coverage>0.80</jacoco.line.coverage>
         <awssdk.version>2.57.4</awssdk.version>
         <bucket4j.version>8.21.0</bucket4j.version>
+        <tika.version>3.3.3</tika.version>
+        <flexmark.version>0.64.8</flexmark.version>
+        <jsoup.version>1.22.2</jsoup.version>
     </properties>
 
     <dependencyManagement>
@@ -76,6 +79,26 @@
             <groupId>com.bucket4j</groupId>
             <artifactId>bucket4j_jdk17-core</artifactId>
             <version>${bucket4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>${tika.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-parsers-standard-package</artifactId>
+            <version>${tika.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.vladsch.flexmark</groupId>
+            <artifactId>flexmark-html2md-converter</artifactId>
+            <version>${flexmark.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>${jsoup.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

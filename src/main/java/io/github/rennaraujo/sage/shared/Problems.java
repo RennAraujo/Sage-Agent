@@ -36,6 +36,8 @@ public final class Problems {
             case NOT_ACCEPTABLE -> "not-acceptable";
             case CONTENT_TOO_LARGE -> "payload-too-large";
             case UNSUPPORTED_MEDIA_TYPE -> "unsupported-media-type";
+            case UNPROCESSABLE_CONTENT -> "unprocessable-content";
+            case CONFLICT -> "conflict";
             case TOO_MANY_REQUESTS -> "rate-limited";
             default -> status.is5xxServerError() ? "internal-error" : "error";
         };
@@ -54,6 +56,8 @@ public final class Problems {
             case NOT_ACCEPTABLE -> "Formato de resposta não aceito";
             case CONTENT_TOO_LARGE -> "Conteúdo grande demais";
             case UNSUPPORTED_MEDIA_TYPE -> "Tipo de conteúdo não suportado";
+            case UNPROCESSABLE_CONTENT -> "Conteúdo não processável";
+            case CONFLICT -> "Conflito";
             case TOO_MANY_REQUESTS -> "Muitas requisições";
             default -> status.is5xxServerError() ? "Erro interno" : "Erro";
         };

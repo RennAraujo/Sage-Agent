@@ -1,6 +1,17 @@
 package io.github.rennaraujo.sage.shared;
 
+import io.github.rennaraujo.sage.document.InvalidDocumentException;
+import io.github.rennaraujo.sage.upload.DocumentConflictException;
+import io.github.rennaraujo.sage.upload.DocumentNotFoundException;
+import io.github.rennaraujo.sage.upload.SecretFinding;
+import io.github.rennaraujo.sage.upload.SecretsFoundException;
+import io.github.rennaraujo.sage.upload.UnsupportedDocumentException;
+import io.github.rennaraujo.sage.upload.UploadTooLargeException;
+import java.net.URI;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -44,6 +55,55 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(HttpStatus.UNAUTHORIZED, null);
     }
 
+    /** As mensagens destas exceções são fixas e nunca citam o conteúdo recebido, então podem ir no {@code detail}. */
+    @ExceptionHandler(UnsupportedDocumentException.class)
+    ResponseEntity<ProblemDetail> unsupportedDocument(UnsupportedDocumentException e) {
+        return problemWithDetail(HttpStatus.UNSUPPORTED_MEDIA_TYPE, e.getMessage());
+    }
+
+    @ExceptionHandler(UploadTooLargeException.class)
+    ResponseEntity<ProblemDetail> tooLarge(UploadTooLargeException e) {
+        return problemWithDetail(HttpStatus.CONTENT_TOO_LARGE, e.getMessage());
+    }
+
+    @ExceptionHandler(InvalidDocumentException.class)
+    ResponseEntity<ProblemDetail> invalidDocument(InvalidDocumentException e) {
+        return problemWithDetail(HttpStatus.UNPROCESSABLE_CONTENT, e.getMessage());
+    }
+
+    @ExceptionHandler(DocumentConflictException.class)
+    ResponseEntity<ProblemDetail> documentConflict(DocumentConflictException e) {
+        return problemWithDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    @ExceptionHandler(DocumentNotFoundException.class)
+    ResponseEntity<ProblemDetail> documentNotFound(DocumentNotFoundException e) {
+        return problemWithDetail(HttpStatus.NOT_FOUND, e.getMessage());
+    }
+
+    /** Só tipo e linha de cada achado (e o caminho da entrada, no caso de zip); nunca o valor encontrado. */
+    @ExceptionHandler(SecretsFoundException.class)
+    ResponseEntity<ProblemDetail> secretsFound(SecretsFoundException e) {
+        ProblemDetail body = Problems.of(HttpStatus.UNPROCESSABLE_CONTENT);
+        body.setType(URI.create("urn:sage:problem:secret-detected"));
+        body.setTitle("Segredo detectado no documento");
+        body.setDetail("O documento parece conter credenciais; remova-as e envie de novo");
+        List<Map<String, Object>> secrets =
+                e.findings().stream().map(ApiExceptionHandler::describe).toList();
+        body.setProperty("segredos", secrets);
+        e.file().ifPresent(file -> body.setProperty("arquivo", file));
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_CONTENT)
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(body);
+    }
+
+    private static Map<String, Object> describe(SecretFinding finding) {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("tipo", finding.type());
+        entry.put("linha", finding.line());
+        return entry;
+    }
+
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> unexpected(Exception e) {
         // Só a classe: a mensagem e a stack podem carregar conteúdo.
@@ -59,6 +119,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         out.putAll(headers);
         out.setContentType(MediaType.APPLICATION_PROBLEM_JSON);
         return new ResponseEntity<>(Problems.of(statusCode), out, statusCode);
+    }
+
+    private static ResponseEntity<ProblemDetail> problemWithDetail(HttpStatus status, String detail) {
+        ProblemDetail body = Problems.of(status);
+        body.setDetail(detail);
+        return ResponseEntity.status(status)
+                .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .body(body);
     }
 
     private static ResponseEntity<ProblemDetail> problem(HttpStatus status, String retryAfterSeconds) {

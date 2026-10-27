@@ -1,6 +1,6 @@
 # API
 
-Este documento descreve o contrato HTTP do Sage. Por enquanto só a parte de autenticação existe; os endpoints de perguntas, upload e lacunas entram nas próximas tarefas e ganham seção aqui quando chegarem.
+Este documento descreve o contrato HTTP do Sage. Por enquanto existem a autenticação e os endpoints de documentos; os de perguntas e lacunas entram nas próximas tarefas e ganham seção aqui quando chegarem.
 
 ## Autenticação e papéis
 
@@ -66,7 +66,7 @@ O limite vale por instância da aplicação, porque os baldes ficam em memória.
 
 ### Formato dos erros
 
-Todo erro da API é `application/problem+json` (RFC 9457) com `type`, `title` e `status`, e nada mais: sem detalhe da exceção, sem nome de classe, sem stack trace e sem trecho de documento. O `type` é um URN estável (`urn:sage:problem:unauthorized`, `forbidden`, `rate-limited`, `bad-request`, `not-found`, `internal-error`...) que o cliente pode comparar; o `title` é o texto para mostrar a uma pessoa. O 401 inclui `WWW-Authenticate: Bearer realm="sage"`.
+Todo erro da API é `application/problem+json` (RFC 9457) com `type`, `title` e `status`. Sem detalhe da exceção, sem nome de classe, sem stack trace e sem trecho de documento. A exceção são os erros de documento (415, 413, 422 e 404 do upload), que acrescentam um `detail` com uma frase fixa em português ("Campo obrigatório ausente no frontmatter: secao"); essas frases citam o nome do campo e nunca o valor enviado. O `type` é um URN estável (`urn:sage:problem:unauthorized`, `forbidden`, `rate-limited`, `bad-request`, `not-found`, `internal-error`...) que o cliente pode comparar; o `title` é o texto para mostrar a uma pessoa. O 401 inclui `WWW-Authenticate: Bearer realm="sage"`.
 
 ```
 HTTP/1.1 401
@@ -77,3 +77,84 @@ Content-Type: application/problem+json
 ```
 
 Os mesmos cabeçalhos de segurança acompanham todas as respostas; estão descritos em [seguranca.md](seguranca.md).
+
+## Documentos
+
+Todos os endpoints desta seção exigem papel `EDITOR`. O ator registrado na auditoria é o nome da chave de API. O que o upload aceita e recusa, e por quê, está em [acervo-e-upload.md](acervo-e-upload.md).
+
+### POST /api/documentos
+
+Envia um arquivo (ou um zip) como `multipart/form-data`. Só `file` é obrigatório; os outros campos preenchem o que o documento não traz no frontmatter e, quando não há `id` no frontmatter, formam o id:
+
+| Campo | Para que serve |
+| --- | --- |
+| `file` | O arquivo: Markdown, texto, PDF, DOCX, HTML ou zip de `.md`/`.txt`. |
+| `fonte` | `publico` ou `interno`. |
+| `linguagem` | Linguagem ou framework (público) ou nome da aplicação (interno). |
+| `versao` | Versão, obrigatória para `fonte=publico`. |
+| `secao` | Seção; sem ela vale o nome do arquivo sem extensão. |
+| `url_origem` | URL `http(s)` da documentação, obrigatória para `fonte=publico` quando o arquivo não tem frontmatter. |
+| `substituir` | `true` para sobrescrever documentos que já existem; sem ele, id repetido dá 409. |
+
+`fonte`, `linguagem` e `versao` também podem vir só no frontmatter (sem `id`): o id é montado com eles. Se o formulário e o frontmatter divergirem, 422. Os campos do formulário passam pela mesma varredura de segredos do documento.
+
+```
+curl -X POST http://localhost:8080/api/documentos \
+  -H "Authorization: Bearer $SAGE_KEY" \
+  -F file=@faturamento.pdf -F fonte=interno -F linguagem=portal-x -F secao=Faturamento
+```
+
+```
+HTTP/1.1 201
+{"ids":["interno/portal-x/faturamento.md"],"substituidos":[]}
+```
+
+Num zip a resposta lista um id por entrada, na ordem do arquivo. Todas as entradas são validadas antes de gravar a primeira, então um segredo na última entrada não deixa metade do zip gravada.
+
+Respostas de erro:
+
+| Status | Quando |
+| --- | --- |
+| 400 | Falta a parte `file` ou o multipart está malformado. |
+| 401, 403 | Sem chave, ou chave `READER`. |
+| 413 | Arquivo ou Markdown convertido acima de `sage.upload.max-file-bytes`; zip acima de `max-zip-bytes`, com mais de `max-zip-entries` entradas ou mais de `max-zip-uncompressed-bytes` depois de descompactado; requisição acima do limite do multipart. |
+| 415 | Tipo de arquivo fora da lista (o tipo vem do conteúdo, não do nome), ou entrada de zip que não é `.md`/`.txt`. |
+| 409 | Algum id do envio já existe e `substituir=true` não foi enviado. Nada é gravado e a resposta não repete o id. Com `substituir=true`, os ids trocados voltam em `substituidos`. |
+| 422 | Frontmatter inválido, id impossível de montar, campo do formulário inválido, zip com caminho inseguro, zip corrompido, PDF sem texto, id repetido dentro do zip, ou segredo detectado. |
+| 429 | Mais de `sage.rate-limit.uploads-per-minute` envios por minuto na mesma chave. |
+
+Quando o motivo é segredo, a resposta lista só tipo e linha, nunca o valor:
+
+```
+HTTP/1.1 422
+Content-Type: application/problem+json
+
+{"type":"urn:sage:problem:secret-detected","title":"Segredo detectado no documento","status":422,
+ "detail":"O documento parece conter credenciais; remova-as e envie de novo",
+ "segredos":[{"tipo":"aws-access-key","linha":3}]}
+```
+
+Se o envio era um zip, a resposta traz também `"arquivo"` com o nome da entrada que falhou, só o último trecho do caminho e no máximo 100 caracteres (a varredura para na primeira entrada com segredo). Se o segredo estava num campo do formulário, `arquivo` vale `campo <nome>`.
+
+### GET /api/documentos
+
+Lista os metadados de todos os documentos, sem o texto:
+
+```
+[{"id":"publico/java/25/stream-api.md","fonte":"publico","linguagem":"java","versao":"25",
+  "secao":"Streams","revisado":true,"coletado_em":"2026-10-01"},
+ {"id":"interno/portal-x/faturamento.md","fonte":"interno","linguagem":"java",
+  "secao":"Faturamento","revisado":false,"coletado_em":"2026-10-27"}]
+```
+
+`versao` só aparece nos documentos que têm versão.
+
+### PATCH /api/documentos?id=...
+
+Marca ou desmarca um documento como revisado. O corpo é `{"revisado": true}` (ou `false`); sem o campo, 400. Responde 200 sem corpo.
+
+### DELETE /api/documentos?id=...
+
+Remove o documento. Responde 204 sem corpo.
+
+Nos dois últimos, um `id` que não existe dá 404 e um `id` fora do formato dá 422. Em nenhum dos casos a resposta repete o id recebido.

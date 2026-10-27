@@ -4,6 +4,7 @@ spring:
   threads:
     virtual:
       enabled: true
+  # Limites e limiar de memória do multipart não ficam aqui: o UploadConfig os deriva de sage.upload.max-zip-bytes.
 
 management:
   endpoints:
@@ -39,3 +40,10 @@ sage:
     # Por chave de API, janela de 1 minuto.
     questions-per-minute: 20
     uploads-per-minute: 10
+  upload:
+    # Arquivo comum e também o Markdown já convertido (um PDF pequeno pode virar texto grande).
+    max-file-bytes: 10MB
+    # Zip: tamanho do arquivo, número de entradas e total descompactado (contado na leitura, contra zip bomb).
+    max-zip-bytes: 50MB
+    max-zip-entries: 500
+    max-zip-uncompressed-bytes: 200MB
