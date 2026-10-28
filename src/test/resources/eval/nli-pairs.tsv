@@ -1,0 +1,73 @@
+# Frases como o modelo de linguagem as escreveria (pt-BR) contra o trecho do acervo que ele citaria.
+# As N incluem negação, versão trocada, número trocado e nome de API errado.
+# Colunas separadas por tab: rótulo (S = sustentada pelo trecho, N = não sustentada), id do documento,
+# caminho de seções do trecho (como no índice) e a frase.
+S	publico/java/21/streams.md	Streams > Collecting results	O Stream.toList() devolve uma lista não modificável com os elementos do stream.
+S	publico/java/21/streams.md	Streams > Collecting results	Chamar add ou remove na lista devolvida por toList lança UnsupportedOperationException.
+S	publico/java/21/records.md	Records > Constructors	O construtor compacto serve para validar ou normalizar os argumentos antes de os campos serem atribuídos.
+S	publico/java/21/records.md	Records > Restrictions	Um record não pode estender outra classe, porque já estende java.lang.Record.
+S	publico/java/21/virtual-threads.md	Virtual threads > Creating them	Executors.newVirtualThreadPerTaskExecutor() cria uma nova virtual thread para cada tarefa enviada.
+S	publico/java/21/virtual-threads.md	Virtual threads > Pinning	No Java 21, uma virtual thread que bloqueia dentro de um bloco synchronized fica presa à carrier thread.
+S	publico/java/25/virtual-threads.md	Virtual threads > Pinning	Desde o Java 24, bloquear dentro de um bloco synchronized não prende mais a carrier thread.
+S	publico/java/25/flexible-constructors.md	Flexible constructor bodies > What the prologue can do	O prólogo do construtor pode validar argumentos antes de chamar super(...) ou this(...).
+S	publico/java/21/generational-zgc.md	Generational ZGC > Enabling it	No Java 21 o modo geracional do ZGC precisa ser ligado com -XX:+UseZGC -XX:+ZGenerational.
+S	publico/spring-boot/3.5/virtual-threads.md	Virtual threads	Para usar virtual threads no Spring Boot 3.5 é preciso definir spring.threads.virtual.enabled=true.
+S	publico/spring-boot/4.1/testing.md	Testing Spring Boot applications > Mocking beans	O @MockBean e o @SpyBean foram removidos no Spring Boot 4.0 e a substituição é @MockitoBean e @MockitoSpyBean.
+S	publico/spring-boot/3.5/actuator.md	Actuator endpoints > Exposure	Por padrão só o endpoint health fica exposto por HTTP.
+S	publico/spring-boot/4.1/http-clients.md	Calling REST services > Timeouts	As propriedades spring.http.client.connect-timeout e spring.http.client.read-timeout definem os timeouts dos clients.
+S	publico/java/25/compact-source-files.md	Compact source files and instance main methods > Console helpers	A classe java.lang.IO oferece println, print e readln para entrada e saída no console.
+S	interno/portal-demo/pagamento.md	Pagamento no portal-demo > Chamadas ao gateway	Toda chamada de cobrança ao gateway tem timeout de 8 segundos.
+S	interno/portal-demo/pagamento.md	Pagamento no portal-demo > Chamadas ao gateway	Depois de uma falha por timeout o portal tenta de novo até 3 vezes.
+S	interno/portal-demo/autenticacao.md	Autenticação e sessão no portal-demo > Bloqueio	A conta é bloqueada por 15 minutos depois de 5 tentativas de login erradas seguidas.
+S	interno/portal-demo/autenticacao.md	Autenticação e sessão no portal-demo > Sessão	A sessão expira depois de 30 minutos sem atividade.
+S	interno/portal-demo/runbook-incidentes.md	Runbook de incidentes do portal-demo > Plantão	A pessoa de plantão tem 15 minutos para reconhecer um SEV1.
+S	interno/portal-demo/faq-suporte.md	Perguntas frequentes do suporte do portal-demo > Reembolso	O reembolso pode ser pedido em até 7 dias corridos depois da entrega.
+S	interno/portal-demo/fluxo-checkout.md	Fluxo de checkout do portal-demo > Passos	O estoque fica reservado por 15 minutos durante o checkout.
+S	interno/portal-demo/notificacoes.md	Notificações do portal-demo > SMS	O código de verificação enviado por SMS vale por 5 minutos.
+S	publico/java/21/sequenced-collections.md	Sequenced collections > Methods	O método reversed devolve uma visão em ordem inversa, e mudanças feitas por ela aparecem na coleção original.
+S	publico/java/21/pattern-switch.md	Pattern matching for switch > Guards	Um guard é escrito com a palavra when depois do padrão.
+S	publico/java/25/flexible-constructors.md	Flexible constructor bodies > What it cannot do	O código do prólogo não pode usar this nem chamar métodos de instância.
+S	publico/spring-boot/3.5/profiles.md	Profiles > Importing configuration	O prefixo optional evita falha na inicialização quando o arquivo importado não existe.
+S	publico/spring-boot/4.1/jackson.md	JSON serialization with Jackson 3 > Unchecked exceptions	As exceções do Jackson 3 estendem RuntimeException.
+S	interno/portal-demo/pagamento.md	Pagamento no portal-demo > PIX e boleto	O código PIX expira em 30 minutos.
+S	interno/portal-demo/notificacoes.md	Notificações do portal-demo > Regras de envio	Mensagens de marketing não são enviadas entre 22h e 7h.
+S	interno/portal-demo/integracao-legado.md	Integração com o ERP legado > Quando falha	Se o arquivo de retorno não aparecer até as 06:00, o batch abre um chamado para o time do ERP.
+N	publico/java/21/streams.md	Streams > Collecting results	O Stream.toList() devolve uma lista mutável.
+N	publico/java/21/records.md	Records > Restrictions	Um record pode estender qualquer outra classe.
+N	publico/java/21/virtual-threads.md	Virtual threads > Creating them	As virtual threads devem ser mantidas em um pool de tamanho fixo.
+N	publico/java/25/virtual-threads.md	Virtual threads > Pinning	No Java 25 o synchronized continua prendendo a carrier thread.
+N	publico/spring-boot/3.5/actuator.md	Actuator endpoints > Exposure	Por padrão todos os endpoints do actuator ficam expostos por HTTP.
+N	publico/spring-boot/4.1/http-clients.md	Calling REST services > Timeouts	O RestClient usa o Apache Kafka para enviar as requisições.
+N	publico/java/21/generational-zgc.md	Generational ZGC > Enabling it	No Java 21 o ZGC geracional já vem ligado por padrão.
+N	interno/portal-demo/pagamento.md	Pagamento no portal-demo > Chamadas ao gateway	Toda chamada de cobrança ao gateway tem timeout de 30 segundos.
+N	interno/portal-demo/pagamento.md	Pagamento no portal-demo > Chamadas ao gateway	Depois de uma falha por timeout o portal tenta de novo até 10 vezes.
+N	interno/portal-demo/autenticacao.md	Autenticação e sessão no portal-demo > Bloqueio	A conta é bloqueada por 60 minutos depois de 3 tentativas de login erradas seguidas.
+N	interno/portal-demo/autenticacao.md	Autenticação e sessão no portal-demo > Sessão	A sessão expira depois de 2 horas sem atividade.
+N	interno/portal-demo/runbook-incidentes.md	Runbook de incidentes do portal-demo > Plantão	A pessoa de plantão tem 1 hora para reconhecer um SEV1.
+N	interno/portal-demo/faq-suporte.md	Perguntas frequentes do suporte do portal-demo > Reembolso	O reembolso pode ser pedido em até 30 dias depois da entrega.
+N	interno/portal-demo/notificacoes.md	Notificações do portal-demo > SMS	O código de verificação enviado por SMS nunca expira.
+N	interno/portal-demo/runbook-incidentes.md	Runbook de incidentes do portal-demo > Durante o incidente	Para voltar a versão anterior basta rodar kubectl rollout undo no cluster.
+N	interno/portal-demo/fluxo-checkout.md	Fluxo de checkout do portal-demo > Passos	O estoque fica reservado por 2 horas durante o checkout.
+N	publico/java/21/sequenced-collections.md	Sequenced collections > Methods	O método reversed devolve uma cópia da coleção em ordem inversa, e mudanças na cópia não afetam a original.
+N	publico/java/21/records.md	Records > Constructors	O construtor compacto não permite validar argumentos.
+N	publico/java/25/flexible-constructors.md	Flexible constructor bodies > What it cannot do	O prólogo do construtor pode chamar métodos de instância e ler campos herdados.
+N	publico/spring-boot/4.1/testing.md	Testing Spring Boot applications > Mocking beans	O @MockBean continua disponível no Spring Boot 4.1.
+N	publico/spring-boot/3.5/virtual-threads.md	Virtual threads	O Spring Boot 3.5 não oferece suporte a virtual threads.
+N	publico/java/21/generational-zgc.md	Generational ZGC > Enabling it	No Java 25 o modo geracional do ZGC precisa ser ligado com -XX:+ZGenerational.
+N	publico/java/25/virtual-threads.md	Virtual threads > Pinning	Desde o Java 21, bloquear dentro de um bloco synchronized não prende mais a carrier thread.
+N	publico/java/25/pattern-switch.md	Pattern matching for switch > Primitive patterns (preview)	Os padrões de tipos primitivos no switch são um recurso final no Java 25.
+N	publico/spring-boot/3.5/testing.md	Testing Spring Boot applications > Mocking beans	O @MockBean e o @SpyBean foram removidos no Spring Boot 3.5.
+N	publico/java/21/string-templates.md	String templates (preview) > Enabling the preview	As string templates são um recurso final no Java 21, sem --enable-preview.
+N	interno/portal-demo/pagamento.md	Pagamento no portal-demo > Cartão	Compras no cartão acima de R$ 100 passam pela autenticação 3DS.
+N	interno/portal-demo/pagamento.md	Pagamento no portal-demo > PIX e boleto	O código PIX expira em 10 minutos.
+N	interno/portal-demo/notificacoes.md	Notificações do portal-demo > E-mail	Depois da terceira falha a mensagem vai para a fila de mensagens mortas.
+N	interno/portal-demo/autenticacao.md	Autenticação e sessão no portal-demo > Recuperação de senha	O link de redefinição de senha expira em 24 horas.
+N	interno/portal-demo/runbook-incidentes.md	Runbook de incidentes do portal-demo > Durante o incidente	Em SEV1, a página de status deve ser atualizada a cada 10 minutos.
+N	interno/portal-demo/visao-geral.md	Visão geral do portal-demo > Ambientes	O deploy em produção é aprovado por três pessoas do Squad Portal.
+N	interno/portal-demo/integracao-legado.md	Integração com o ERP legado > Janela de sincronização	A sincronização de pedidos roda todo dia às 04:00.
+N	publico/java/21/streams.md	Streams > Collecting results	O método Stream.toImmutableList() devolve uma lista não modificável.
+N	publico/java/21/virtual-threads.md	Virtual threads > Creating them	Executors.newFixedVirtualThreadPool() cria um pool de virtual threads de tamanho fixo.
+N	publico/java/25/compact-source-files.md	Compact source files and instance main methods > Console helpers	A classe java.lang.Console oferece println, print e readln sem importar System.
+N	publico/spring-boot/4.1/http-clients.md	Calling REST services > Timeouts	As propriedades spring.http.client.timeout.read e spring.http.client.timeout.connect definem os timeouts.
+N	publico/spring-boot/3.5/actuator.md	Actuator endpoints > Exposure	Use management.endpoints.web.expose=* para expor todos os endpoints.
+N	publico/java/25/module-imports.md	Module import declarations > When to use it	O import module java.base importa só as classes do pacote java.util.

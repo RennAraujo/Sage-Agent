@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rennaraujo.sage.testsupport.LatencyBudget;
 import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -84,6 +85,53 @@ class OnnxNliCheckerTest {
 
         assertThat(checker.isSupported("O método toList retorna uma lista imutável.", evidence))
                 .isTrue();
+    }
+
+    /** Chunk real do acervo de avaliação (Java 25, "Streams > Gatherers"): a frase está nele, entre outras. */
+    private static final String LONG_CHUNK = "Streams > Gatherers\n"
+            + "Stream gatherers, final in Java 25, let a pipeline define its own intermediate operations. "
+            + "Stream.gather(Gatherer) applies a gatherer, and the java.util.stream.Gatherers class has ready-made "
+            + "ones: windowFixed groups elements into lists of a fixed size, windowSliding builds overlapping windows, "
+            + "fold and scan accumulate state, and mapConcurrent maps elements concurrently with a bound on the number "
+            + "of tasks, using virtual threads.\n\n"
+            + "A gatherer can keep private state, emit zero or more elements for each input and short-circuit the "
+            + "stream, which is what makes operations such as windowing possible without collecting the whole "
+            + "stream first.";
+
+    @Test
+    void sentenceCopiedFromInsideALongChunkIsSupported() {
+        assertThat(checker.isSupported(
+                        "Stream gatherers, final in Java 25, let a pipeline define its own intermediate operations.",
+                        List.of(LONG_CHUNK)))
+                .isTrue();
+    }
+
+    @Test
+    void ptBrParaphraseOfOneSentenceOfALongChunkIsSupported() {
+        assertThat(checker.isSupported(
+                        "Os gatherers do Java 25 permitem que um pipeline defina as próprias operações intermediárias.",
+                        List.of(LONG_CHUNK)))
+                .isTrue();
+    }
+
+    @Test
+    void fragmentThatDropsANegationIsJudgedByTheModelAndRejected() {
+        String chunk = "Notes\n"
+                + "Not supported in Java 21 when running on the module path with preview features enabled."
+                + " Use the launcher flag instead.";
+
+        assertThat(checker.isSupported(
+                        "supported in Java 21 when running on the module path with preview features enabled",
+                        List.of(chunk)))
+                .isFalse();
+    }
+
+    @Test
+    void windowingDoesNotLetAContradictionPassThroughALongChunk() {
+        assertThat(checker.isSupported(
+                        "Os gatherers do Java 25 são uma função em preview que precisa de --enable-preview.",
+                        List.of(LONG_CHUNK)))
+                .isFalse();
     }
 
     @Test
@@ -182,7 +230,7 @@ class OnnxNliCheckerTest {
         long millisPerSentence = (System.nanoTime() - start) / 1_000_000 / TIMED_RUNS;
 
         LOG.info("nli: {} ms por frase (2 trechos citados de ~370 caracteres, max-tokens 256)", millisPerSentence);
-        assertThat(millisPerSentence).isLessThan(MAX_MILLIS_PER_SENTENCE);
+        assertThat(millisPerSentence).isLessThan(LatencyBudget.millis(MAX_MILLIS_PER_SENTENCE));
     }
 
     /** O pior caso da resposta: a frase contra os 5 trechos do contexto, cada um no teto de 1500 caracteres. */
@@ -204,7 +252,7 @@ class OnnxNliCheckerTest {
         LOG.info(
                 "nli: {} ms por frase (5 trechos citados no teto de ~1500 caracteres, max-tokens 256)",
                 millisPerSentence);
-        assertThat(millisPerSentence).isLessThan(WORST_CASE_MAX_MILLIS);
+        assertThat(millisPerSentence).isLessThan(LatencyBudget.millis(WORST_CASE_MAX_MILLIS));
     }
 
     @Test

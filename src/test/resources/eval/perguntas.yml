@@ -1,0 +1,532 @@
+# Perguntas-gabarito do acervo de avaliação (src/test/resources/eval/acervo).
+#
+# Campos de cada item:
+#   pergunta         texto enviado ao Sage
+#   fonte            publico | interno | fora (fora = fora do acervo, a resposta correta é "não documentado")
+#   esperadoDocId    id do documento que precisa estar entre os trechos de contexto (texto, ou lista: todos precisam estar)
+#   esperadoRota     FAST_MODEL | STRONG_MODEL | NOT_DOCUMENTED
+#   versoes          (opcional) versões que o analisador precisa extrair da pergunta, na ordem
+#   esperaTextos     (opcional) eventos "text" fixos, emitidos pelo código, que precisam aparecer na resposta
+#   naoEsperaTextos  (opcional) textos fixos que NÃO podem aparecer (por exemplo uma falsa ausência)
+#   esperaConsultadas (opcional) "linguagem versao" que done.documentacaoConsultada precisa trazer, na ordem
+#   semConsultadas   (opcional) true: done.documentacaoConsultada precisa vir vazio
+
+# ---------------------------------------------------------------- publico: Java 21
+- pergunta: "Como o Stream.toList funciona no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/streams.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Posso alterar a lista devolvida por toList no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/streams.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Para que serve Collectors.teeing no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/streams.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como validar argumentos no construtor de um record no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/records.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Um record pode estender outra classe no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/records.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como criar uma virtual thread no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/virtual-threads.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O que é pinning de virtual threads no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/virtual-threads.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quais as regras para as subclasses de uma sealed class no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/sealed-classes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como usar guard com when no switch do java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/pattern-switch.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como obter o último elemento de uma List no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/sequenced-collections.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como habilitar o ZGC geracional no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/generational-zgc.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como usar string templates no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/string-templates.md
+  esperadoRota: FAST_MODEL
+
+# ---------------------------------------------------------------- publico: Java 25
+- pergunta: "Como usar Stream Gatherers no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/streams.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O que faz windowFixed no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/streams.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como validar argumentos antes de chamar super no construtor no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/flexible-constructors.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como escrever um programa com void main sem declarar classe no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/compact-source-files.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como importar todos os pacotes de java.base de uma vez no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/module-imports.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O que são scoped values no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/virtual-threads.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O synchronized ainda trava a carrier thread de uma virtual thread no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/virtual-threads.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como ignorar um componente num record pattern no java 25?"
+  fonte: publico
+  esperadoDocId: publico/java/25/records.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como funciona o ZGC no java 25 sem a flag ZGenerational?"
+  fonte: publico
+  esperadoDocId: publico/java/25/generational-zgc.md
+  esperadoRota: STRONG_MODEL
+
+# ---------------------------------------------------------------- publico: Java sem versão (usa a mais recente, 25)
+- pergunta: "Como usar toList no java?"
+  fonte: publico
+  esperadoDocId: publico/java/25/streams.md
+  esperadoRota: FAST_MODEL
+  esperaTextos:
+    - "Considerei a versão 25, a mais recente disponível."
+    - "Documentação consultada: Java 25"
+  esperaConsultadas: ["java 25"]
+- pergunta: "Como criar uma virtual thread no java?"
+  fonte: publico
+  esperadoDocId: publico/java/25/virtual-threads.md
+  esperadoRota: FAST_MODEL
+  esperaTextos:
+    - "Considerei a versão 25, a mais recente disponível."
+    - "Documentação consultada: Java 25"
+  esperaConsultadas: ["java 25"]
+- pergunta: "Quais classes uma sealed interface permite no java?"
+  fonte: publico
+  esperadoDocId: publico/java/25/sealed-classes.md
+  esperadoRota: FAST_MODEL
+  esperaTextos:
+    - "Considerei a versão 25, a mais recente disponível."
+  esperaConsultadas: ["java 25"]
+
+# ---------------------------------------------------------------- publico: Spring Boot 3.5
+- pergunta: "Como expor endpoints do actuator no spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/actuator.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como configurar a readiness probe no spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/actuator.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como ligar virtual threads no spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/virtual-threads.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como validar @ConfigurationProperties no spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/configuration-properties.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como ativar profiles no spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/profiles.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como o spring.config.import trata arquivos opcionais no spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/profiles.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como usar @MockitoBean nos testes do spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/testing.md
+  esperadoRota: FAST_MODEL
+
+# ---------------------------------------------------------------- publico: Spring Boot 4.1
+- pergunta: "Como configurar o timeout do client HTTP no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/http-clients.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como declarar um client HTTP com @ImportHttpServices no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/http-clients.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quais pacotes o Jackson 3 usa no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/jackson.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como injetar o TestRestTemplate nos testes do spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/testing.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O que aconteceu com o @MockBean no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/testing.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como habilitar virtual threads no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/virtual-threads.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como proteger os endpoints do actuator no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/actuator.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como definir valores padrão num record de @ConfigurationProperties no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/configuration-properties.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como habilitar virtual threads no spring boot?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/virtual-threads.md
+  esperadoRota: FAST_MODEL
+  esperaTextos:
+    - "Considerei a versão 4.1, a mais recente disponível."
+    - "Documentação consultada: Spring Boot 4.1"
+  esperaConsultadas: ["spring-boot 4.1"]
+- pergunta: "Como customizar o JsonMapper no spring boot?"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/4.1/jackson.md
+  esperadoRota: FAST_MODEL
+  esperaConsultadas: ["spring-boot 4.1"]
+
+# ---------------------------------------------------------------- publico: versão pedida (requisito do usuário)
+- pergunta: "traga a documentação do java 21 sobre virtual threads"
+  fonte: publico
+  esperadoDocId: publico/java/21/virtual-threads.md
+  esperadoRota: FAST_MODEL
+  versoes: ["21"]
+  esperaTextos: ["Documentação consultada: Java 21"]
+  esperaConsultadas: ["java 21"]
+- pergunta: "traga a documentação do java 21 sobre sequenced collections"
+  fonte: publico
+  esperadoDocId: publico/java/21/sequenced-collections.md
+  esperadoRota: FAST_MODEL
+  versoes: ["21"]
+  esperaTextos: ["Documentação consultada: Java 21"]
+  esperaConsultadas: ["java 21"]
+- pergunta: "traga a documentação do java 25 sobre records"
+  fonte: publico
+  esperadoDocId: publico/java/25/records.md
+  esperadoRota: FAST_MODEL
+  versoes: ["25"]
+  esperaTextos: ["Documentação consultada: Java 25"]
+  esperaConsultadas: ["java 25"]
+- pergunta: "traga a documentação do spring boot 3.5 sobre actuator"
+  fonte: publico
+  esperadoDocId: publico/spring-boot/3.5/actuator.md
+  esperadoRota: FAST_MODEL
+  versoes: ["3.5"]
+  esperaTextos: ["Documentação consultada: Spring Boot 3.5"]
+  esperaConsultadas: ["spring-boot 3.5"]
+- pergunta: "isso existe no java 25 ou é exclusivo do java 21? string templates"
+  fonte: publico
+  esperadoDocId: publico/java/21/string-templates.md
+  esperadoRota: STRONG_MODEL
+  versoes: ["25", "21"]
+  # Um trecho de preview do Java 25 que não fala de templates pontua 0.43, então a versão 25 entra no contexto.
+  esperaTextos: ["Documentação consultada: Java 21"]
+  esperaConsultadas: ["java 25", "java 21"]
+- pergunta: "isso existe no java 21 ou é exclusivo do java 25? flexible constructor bodies"
+  fonte: publico
+  esperadoDocId: publico/java/25/flexible-constructors.md
+  esperadoRota: STRONG_MODEL
+  versoes: ["21", "25"]
+  esperaTextos: ["Documentação consultada: Java 25"]
+  naoEsperaTextos: ["A documentação do Java 21 disponível não menciona isso."]
+- pergunta: "virtual threads existe no java 25 ou é exclusivo do java 21?"
+  fonte: publico
+  esperadoDocId: [publico/java/25/virtual-threads.md, publico/java/21/virtual-threads.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["25", "21"]
+  esperaTextos: ["Documentação consultada: Java 25", "Documentação consultada: Java 21"]
+  naoEsperaTextos: ["A documentação do Java 25 disponível não menciona isso.", "A documentação do Java 21 disponível não menciona isso."]
+  esperaConsultadas: ["java 25", "java 21"]
+- pergunta: "sealed classes existe no java 21 e no java 25?"
+  fonte: publico
+  esperadoDocId: [publico/java/21/sealed-classes.md, publico/java/25/sealed-classes.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["21", "25"]
+  naoEsperaTextos: ["A documentação do Java 21 disponível não menciona isso.", "A documentação do Java 25 disponível não menciona isso."]
+  esperaConsultadas: ["java 21", "java 25"]
+- pergunta: "o ZGC geracional existe no java 21 ou no java 25?"
+  fonte: publico
+  esperadoDocId: [publico/java/21/generational-zgc.md, publico/java/25/generational-zgc.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["21", "25"]
+  naoEsperaTextos: ["A documentação do Java 21 disponível não menciona isso.", "A documentação do Java 25 disponível não menciona isso."]
+  esperaConsultadas: ["java 21", "java 25"]
+- pergunta: "o @MockBean existe no spring boot 4.1 ou é exclusivo do spring boot 3.5?"
+  fonte: publico
+  esperadoDocId: [publico/spring-boot/4.1/testing.md, publico/spring-boot/3.5/testing.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["4.1", "3.5"]
+  esperaConsultadas: ["spring-boot 4.1", "spring-boot 3.5"]
+- pergunta: "Stream.toList existe no java 21 e no java 25?"
+  fonte: publico
+  esperadoDocId: [publico/java/21/streams.md, publico/java/25/streams.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["21", "25"]
+  naoEsperaTextos: ["A documentação do Java 21 disponível não menciona isso.", "A documentação do Java 25 disponível não menciona isso."]
+  esperaConsultadas: ["java 21", "java 25"]
+- pergunta: "pattern matching for switch existe no java 21 ou no java 25?"
+  fonte: publico
+  esperadoDocId: [publico/java/21/pattern-switch.md, publico/java/25/pattern-switch.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["21", "25"]
+  naoEsperaTextos: ["A documentação do Java 21 disponível não menciona isso.", "A documentação do Java 25 disponível não menciona isso."]
+  esperaConsultadas: ["java 21", "java 25"]
+- pergunta: "sequenced collections existe no java 21 e no java 25?"
+  fonte: publico
+  esperadoDocId: [publico/java/21/sequenced-collections.md, publico/java/25/sequenced-collections.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["21", "25"]
+  naoEsperaTextos: ["A documentação do Java 21 disponível não menciona isso.", "A documentação do Java 25 disponível não menciona isso."]
+  esperaConsultadas: ["java 21", "java 25"]
+- pergunta: "o actuator existe no spring boot 3.5 e no spring boot 4.1?"
+  fonte: publico
+  esperadoDocId: [publico/spring-boot/3.5/actuator.md, publico/spring-boot/4.1/actuator.md]
+  esperadoRota: STRONG_MODEL
+  versoes: ["3.5", "4.1"]
+  naoEsperaTextos: ["A documentação do Spring Boot 3.5 disponível não menciona isso.", "A documentação do Spring Boot 4.1 disponível não menciona isso."]
+  esperaConsultadas: ["spring-boot 3.5", "spring-boot 4.1"]
+- pergunta: "em qual versão do java o synchronized deixou de travar virtual threads?"
+  fonte: publico
+  esperadoDocId: publico/java/25/virtual-threads.md
+  esperadoRota: STRONG_MODEL
+  versoes: []
+- pergunta: "como usar records no java 17?"
+  fonte: publico
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+  versoes: ["17"]
+  esperaTextos: ["Não tenho a documentação do Java 17 no acervo."]
+  semConsultadas: true
+- pergunta: "traga a documentação do java 17 sobre streams"
+  fonte: publico
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+  versoes: ["17"]
+  esperaTextos: ["Não tenho a documentação do Java 17 no acervo."]
+  semConsultadas: true
+- pergunta: "como ligar virtual threads no spring boot 2.7?"
+  fonte: publico
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+  versoes: ["2.7"]
+  esperaTextos: ["Não tenho a documentação do Spring Boot 2.7 no acervo."]
+  semConsultadas: true
+- pergunta: "records existe no java 17 ou no java 21?"
+  fonte: publico
+  esperadoDocId: publico/java/21/records.md
+  esperadoRota: STRONG_MODEL
+  versoes: ["17", "21"]
+  esperaTextos: ["Não tenho a documentação do Java 17 no acervo.", "Documentação consultada: Java 21"]
+  esperaConsultadas: ["java 21"]
+
+# ---------------------------------------------------------------- interno: portal-demo
+- pergunta: "Qual o timeout das chamadas ao gateway de pagamento no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/pagamento.md
+  esperadoRota: FAST_MODEL
+  esperaConsultadas: ["portal-demo"]
+- pergunta: "Quantas tentativas de cartão cada pedido aceita no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/pagamento.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quanto tempo o código PIX do portal-demo leva para expirar?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/pagamento.md
+  esperadoRota: FAST_MODEL
+- pergunta: "A partir de que valor o portal-demo exige 3DS no cartão?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/pagamento.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quanto tempo leva o estorno de cartão no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/pagamento.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual a política de novas tentativas do envio de e-mail no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/notificacoes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quanto tempo vale o código de verificação por SMS no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/notificacoes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Em que horário o portal-demo não envia mensagens de marketing?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/notificacoes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual a janela de deduplicação de notificações no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/notificacoes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Depois de quantas tentativas de login erradas a conta é bloqueada no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/autenticacao.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quanto tempo dura a sessão inativa no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/autenticacao.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Para quem o segundo fator é obrigatório no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/autenticacao.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Em quanto tempo expira o link de redefinição de senha do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/autenticacao.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual o tempo de vida do token de renovação no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/autenticacao.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual o prazo para reconhecer um SEV1 no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/runbook-incidentes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quando muda o plantão do Squad Portal no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/runbook-incidentes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Em quanto tempo sai o post-mortem de um incidente do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/runbook-incidentes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como voltar a versão anterior em produção no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/runbook-incidentes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O que é um SEV2 no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/runbook-incidentes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "De quanto em quanto tempo a página de status é atualizada num SEV1 do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/runbook-incidentes.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual o horário de atendimento do suporte do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/faq-suporte.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual o prazo de reembolso no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/faq-suporte.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Até quando dá para trocar o endereço de entrega no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/faq-suporte.md
+  esperadoRota: FAST_MODEL
+- pergunta: "A que horas roda a sincronização com o ERP legado no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/integracao-legado.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual o nome do bucket da integração com o ERP legado do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/integracao-legado.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quando o batch do portal-demo abre chamado para o time do ERP?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/integracao-legado.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Que banco de dados o portal-demo usa?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/visao-geral.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Em quais dias da semana a produção do portal-demo recebe deploy?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/visao-geral.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Qual time é dono do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/visao-geral.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Quantas pessoas aprovam o deploy em produção do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/visao-geral.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Por quanto tempo o estoque fica reservado no checkout do portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/fluxo-checkout.md
+  esperadoRota: FAST_MODEL
+- pergunta: "O que acontece se a gravação do pedido falhar depois da cobrança aprovada no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/fluxo-checkout.md
+  esperadoRota: FAST_MODEL
+- pergunta: "Como funciona o fluxo de checkout do portal-demo?"
+  fonte: interno
+  esperadoDocId:
+    - interno/portal-demo/fluxo-checkout.md
+    - interno/portal-demo/pagamento.md
+    - interno/portal-demo/notificacoes.md
+  esperadoRota: STRONG_MODEL
+  esperaConsultadas: ["portal-demo"]
+- pergunta: "Explique o passo a passo de uma compra no portal-demo"
+  fonte: interno
+  esperadoDocId:
+    - interno/portal-demo/fluxo-checkout.md
+    - interno/portal-demo/pagamento.md
+    - interno/portal-demo/notificacoes.md
+  esperadoRota: STRONG_MODEL
+- pergunta: "Qual o fluxo de pagamento no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/pagamento.md
+  esperadoRota: STRONG_MODEL
+- pergunta: "Como funciona o fluxo de login e sessão no portal-demo?"
+  fonte: interno
+  esperadoDocId: interno/portal-demo/autenticacao.md
+  esperadoRota: STRONG_MODEL
+
+# ---------------------------------------------------------------- fora do acervo
+- pergunta: "Qual a capital da França?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Como fazer um bolo de cenoura?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Quem ganhou a Copa do Mundo de 2022?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Qual a previsão do tempo para amanhã em São Paulo?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Explique a teoria da relatividade geral."
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Como configurar o Kafka no spring boot 4.1?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Como mapear entidades com Hibernate no spring boot 3.5?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Como o coletor G1 divide a heap no java 21?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Como compilar um projeto com Gradle no java?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED
+- pergunta: "Qual é o orçamento mensal de nuvem do portal-demo?"
+  fonte: fora
+  esperadoDocId: []
+  esperadoRota: NOT_DOCUMENTED

@@ -41,18 +41,27 @@ class SearchConfig {
     }
 
     @Bean
-    Retriever retriever(SearchIndex index, ObjectProvider<Reranker> rerankers, RetrievalProperties properties) {
+    Retriever retriever(
+            SearchIndex index,
+            ObjectProvider<Reranker> rerankers,
+            RetrievalProperties properties,
+            ObjectProvider<RerankQueryCleaner> cleaners) {
         Optional<Reranker> reranker = Optional.ofNullable(rerankers.getIfAvailable());
         if (reranker.isEmpty()) {
             LOG.warn("Modelo de reranking ausente (sage.models.dir): o score passa a ser a cobertura lexical dos "
                     + "termos da pergunta, não uma nota do reranker. Rode scripts/download-models para baixá-lo.");
         } else {
             LOG.info(
-                    "Reranker ligado: {} candidatos, {} no contexto",
+                    "Reranker ligado: {} candidatos (busca com profundidade {}), {} no contexto",
                     properties.candidates(),
+                    properties.searchDepth(),
                     properties.contextChunks());
         }
-        return new Retriever(index, reranker, properties);
+        return new Retriever(
+                index,
+                reranker,
+                properties,
+                Optional.ofNullable(cleaners.getIfAvailable()).orElse(RerankQueryCleaner.NONE));
     }
 
     @Bean

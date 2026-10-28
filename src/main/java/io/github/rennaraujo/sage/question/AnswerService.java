@@ -429,7 +429,7 @@ public final class AnswerService {
         int spare = 0;
         for (int i = 0; i < slots.size(); i++) {
             shares[i] = Math.max(MIN_CHUNKS_PER_GROUP, shares[i]);
-            found.add(decider.relevant(retriever.retrieve(question, filters.get(i), shares[i])));
+            found.add(groupChunks(question, filters.get(i), shares[i], slots.get(i)));
             spare += shares[i] - found.get(i).size();
         }
         List<Integer> full = new ArrayList<>();
@@ -443,7 +443,7 @@ public final class AnswerService {
             for (int k = 0; k < full.size(); k++) {
                 int i = full.get(k);
                 shares[i] += extra[k];
-                found.set(i, decider.relevant(retriever.retrieve(question, filters.get(i), shares[i])));
+                found.set(i, groupChunks(question, filters.get(i), shares[i], slots.get(i)));
             }
         }
         List<VersionContext> groups = new ArrayList<>(slots.size());
@@ -459,6 +459,27 @@ public final class AnswerService {
                 : Optional.of(ONLY_COMPARED.formatted(joined(
                         searched.stream().map(v -> languageName(plan) + " " + v).toList())));
         return new Retrieval(List.copyOf(all), List.copyOf(groups), notice);
+    }
+
+    /**
+     * Trechos de um grupo da comparação: os que passam no limiar de relevância e, se nenhum passar, o melhor trecho da
+     * busca híbrida dentro do filtro da versão (desde que o documento seja mesmo daquela versão). O reranker erra
+     * para baixo em perguntas curtas ou diluídas, e dizer "a documentação do Java 21 não menciona isso" de um assunto
+     * que o Java 21 documenta é pior do que mostrar ao modelo um trecho fraco, que ele pode citar como ausência pelo
+     * molde. Só vale para grupo de versão pública; o grupo interno segue só o limiar. O código só diz "não menciona"
+     * sozinho quando a versão não tem trecho nenhum no filtro.
+     */
+    private List<ScoredChunk> groupChunks(String question, SearchFilter filter, int share, VersionContext slot) {
+        List<ScoredChunk> relevant = decider.relevant(retriever.retrieve(question, filter, share));
+        if (!relevant.isEmpty() || slot.internal()) {
+            return relevant;
+        }
+        return retriever
+                .hybridTop(question, filter)
+                .filter(top ->
+                        top.chunk().version().filter(slot.version()::equals).isPresent())
+                .map(List::of)
+                .orElse(relevant);
     }
 
     /** "A", "A e B", "A, B e C". */

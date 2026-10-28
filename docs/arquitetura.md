@@ -102,7 +102,7 @@ Em memória, cada vetor custa 384 × 4 bytes = 1,5 KB, mais o grafo HNSW (algo c
 
 ## Reranker e o score que decide o caminho
 
-A busca híbrida entrega 20 candidatos em ordem de RRF, e a posição nessa lista não diz se o melhor deles responde à pergunta: o RRF devolve os "menos ruins" mesmo quando todos são. Quem decide se a pergunta tem resposta no acervo (e, portanto, se segue para o modelo de linguagem com contexto ou cai no caminho de lacuna) precisa de um número que signifique "este trecho responde isto". É para isso que existe o reranker.
+A busca híbrida entrega os candidatos (`sage.retrieval.candidates`, 8 depois da calibração da Task 20; a profundidade de cada lista antes da fusão é `sage.retrieval.search-depth`, 30) em ordem de RRF, e a posição nessa lista não diz se o melhor deles responde à pergunta: o RRF devolve os "menos ruins" mesmo quando todos são. Quem decide se a pergunta tem resposta no acervo (e, portanto, se segue para o modelo de linguagem com contexto ou cai no caminho de lacuna) precisa de um número que signifique "este trecho responde isto". É para isso que existe o reranker.
 
 ### O modelo
 
@@ -126,7 +126,9 @@ O custo do modelo é proporcional ao total de tokens do lote; neste hardware (Ry
 | 20 pares, trechos no teto de 1500 caracteres, `max-tokens` 256 | 780 a 1030 ms |
 | 30 pares, trechos de ~1300 caracteres, sem corte (512), medido antes de adotar o 256 | ~2000 ms |
 
-A faixa de 780 a 1030 ms é a variação entre rodar o teste sozinho e rodá-lo junto dos outros testes da classe. O teste `twentyCeilingSizedPairsWithinBudget` usa 1500 ms como guarda de regressão; a meta de 800 ms não foi atingida de forma estável nesta máquina com esses parâmetros, e isso é uma limitação conhecida. Em produção o que importa é a CPU do contêiner, que pode ser mais lenta que a de desenvolvimento.
+Esses números são da Task 9, com 20 candidatos e 256 tokens. Os valores de produção hoje são 8 candidatos e `max-tokens` 128, calibrados na Task 20 (busca mais reranker em ~130 ms com trechos de 1400 caracteres); a tabela e o raciocínio estão em [decisoes.md](decisoes.md#calibração-com-as-perguntas-gabarito).
+
+A faixa de 780 a 1030 ms é a variação entre rodar o teste sozinho e rodá-lo junto dos outros testes da classe. O teste `productionCandidatesAtTheCeilingWithinBudget` usa 1500 ms como guarda de regressão; a meta de 800 ms não foi atingida de forma estável nesta máquina com esses parâmetros, e isso é uma limitação conhecida. Em produção o que importa é a CPU do contêiner, que pode ser mais lenta que a de desenvolvimento.
 
 O que o 256 custa em qualidade: um trecho de 1500 caracteres tem uns 330 tokens, então o reranker vê só os primeiros ~230 tokens do trecho (o resto do orçamento é a pergunta e o título da seção). Se a parte que responde está no fim de um trecho grande, o score cai e o trecho pode ficar de fora dos 5 do contexto, mesmo que o modelo de linguagem recebesse o trecho inteiro depois. Trechos curtos, que são a maioria no Markdown de documentação dividido por título, não são afetados. Subir `max-tokens` para 512 devolve a qualidade nos trechos grandes e custa o dobro no pior caso. Também foram experimentados a versão quantizada em int8 e a otimizada (`model_O3`) do mesmo repositório, e mais threads: o int8 ganhou uns 10% (a CPU não tem VNNI) e o O3 20 a 30%, o que não justificou trocar o artefato oficial. Nenhuma das configurações foi validada com perguntas reais do acervo.
 

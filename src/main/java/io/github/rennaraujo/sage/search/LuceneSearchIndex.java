@@ -89,7 +89,7 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
 
     private final MarkdownChunker chunker;
     private final IndexReadiness readiness;
-    private final int candidates;
+    private final int searchDepth;
     private final Optional<EmbeddingModel> embeddings;
     private final HybridRanker ranker = new HybridRanker();
     private final Analyzer textAnalyzer = textAnalyzer();
@@ -110,7 +110,7 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
             RetrievalProperties properties, IndexReadiness readiness, Optional<EmbeddingModel> embeddings) {
         this.chunker = new MarkdownChunker(properties.maxChunkChars());
         this.readiness = readiness;
-        this.candidates = properties.candidates();
+        this.searchDepth = properties.searchDepth();
         this.embeddings = embeddings;
         try {
             // Sem o wrapper o writer indexaria "exact" com o analisador de "text" e só a consulta usaria o de espaço.
@@ -214,7 +214,7 @@ public final class LuceneSearchIndex implements SearchIndex, AutoCloseable {
         if (queryVector.isEmpty()) {
             return run(bm25Query(scoring, filterQuery), limit);
         }
-        int wanted = Math.max(candidates, limit);
+        int wanted = Math.max(searchDepth, limit);
         List<Chunk> bm25 = run(bm25Query(scoring, filterQuery), wanted);
         List<Chunk> nearest =
                 runVector(new KnnFloatVectorQuery(F_VECTOR, queryVector.get(), wanted, filterQuery), wanted);

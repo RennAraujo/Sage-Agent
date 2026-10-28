@@ -8,6 +8,8 @@ import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.search.Chunk;
 import io.github.rennaraujo.sage.search.ScoredChunk;
 import io.github.rennaraujo.sage.search.embedding.ModelFiles;
+import io.github.rennaraujo.sage.testsupport.LatencyBudget;
+import io.github.rennaraujo.sage.testsupport.ProductionSettings;
 import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,16 +30,19 @@ import org.slf4j.LoggerFactory;
 class OnnxRerankerTest {
 
     private static final Logger LOG = LoggerFactory.getLogger(OnnxRerankerTest.class);
-    private static final RerankProperties PROPERTIES = new RerankProperties(256);
+    private static final RerankProperties PROPERTIES =
+            new RerankProperties(ProductionSettings.integer("rerank", "max-tokens"));
     private static final int PAIRS = 30;
-    private static final int CANDIDATES = 20;
+    /** Os candidatos de produção ({@code sage.retrieval.candidates}). */
+    private static final int CANDIDATES = ProductionSettings.integer("retrieval", "candidates");
+
     private static final int CEILING_REPEATS = 46;
     private static final long MAX_MILLIS = 500;
     private static final int HUGE_WORDS = 5000;
     private static final int TYPICAL_REPEATS = 8;
     /**
-     * Guarda contra regressão (cerca de 1,5x o medido, ~1030 ms). A meta do controlador era 800 ms e não foi atingida
-     * nesta máquina com max-tokens 256 e 20 candidatos; ver o relatório.
+     * Guarda contra regressão com a configuração de produção (candidatos e tokens do {@code application.yml}); o
+     * valor medido está em docs/decisoes.md. O orçamento estrito só vale com {@code -Peval}.
      */
     private static final long CEILING_BUDGET_MILLIS = 1500;
 
@@ -138,12 +143,12 @@ class OnnxRerankerTest {
 
         LOG.info("reranker: {} pares de trecho curto (~260 caracteres) em {} ms", PAIRS, millis);
         assertThat(ranked).hasSize(PAIRS);
-        assertThat(millis).isLessThan(MAX_MILLIS);
+        assertThat(millis).isLessThan(LatencyBudget.millis(MAX_MILLIS));
     }
 
-    /** O caso que decide o orçamento: os 20 candidatos padrão, cada trecho no teto de 1500 caracteres. */
+    /** O caso que decide o orçamento: os candidatos de produção, cada trecho no teto de 1500 caracteres. */
     @Test
-    void twentyCeilingSizedPairsWithinBudget() {
+    void productionCandidatesAtTheCeilingWithinBudget() {
         List<Chunk> candidates = chunksOfRepeats(CANDIDATES, CEILING_REPEATS);
         reranker.rerank("como configurar o TLS", candidates);
 
@@ -152,9 +157,12 @@ class OnnxRerankerTest {
         long millis = (System.nanoTime() - start) / 1_000_000;
 
         LOG.info(
-                "reranker: {} pares de trecho no teto (~1500 caracteres, max-tokens 256) em {} ms", CANDIDATES, millis);
+                "reranker: {} pares de trecho no teto (~1500 caracteres, max-tokens {}) em {} ms",
+                CANDIDATES,
+                PROPERTIES.maxTokens(),
+                millis);
         assertThat(ranked).hasSize(CANDIDATES);
-        assertThat(millis).isLessThan(CEILING_BUDGET_MILLIS);
+        assertThat(millis).isLessThan(LatencyBudget.millis(CEILING_BUDGET_MILLIS));
     }
 
     private static List<Chunk> chunksOfRepeats(int count, int repeats) {

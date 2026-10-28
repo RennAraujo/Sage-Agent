@@ -17,10 +17,13 @@ import tools.jackson.databind.json.JsonMapper;
  * rótulos. A frase é sustentada se, para algum trecho, a probabilidade (softmax) de "entailment" é ao menos
  * {@code sage.guard.min-entailment}. Os trechos de uma chamada vão num único lote.
  *
- * <p>A ordem dos rótulos vem do {@code id2label} do config do modelo, não de uma suposição: a ordem muda de modelo
- * para modelo. Cada par é truncado em {@code sage.guard.nli-max-tokens}, cortando só a premissa (primeiro lado do par);
- * a hipótese é cortada antes, em no máximo metade do orçamento. Sessão, tokenizers, truncamento e ciclo de vida são do
- * {@link OnnxPairModel}, o mesmo que o reranker usa.
+ * <p>A ordem dos rótulos vem do {@code id2label} do config do modelo, não de uma suposição: a ordem
+ * muda de modelo para modelo. Cada par é truncado em {@code sage.guard.nli-max-tokens}, cortando só a
+ * premissa (primeiro lado do par); a hipótese é cortada antes, em no máximo metade do orçamento. Cada
+ * trecho vira janelas de 2 frases (ver {@link PremiseWindows}) e vale a maior probabilidade entre
+ * elas; cópia de frase completa do trecho é aceita sem o modelo, e identificador de código que nenhum
+ * trecho traz ({@link IdentifierCheck}) reprova a frase sem o modelo. Sessão, tokenizers, truncamento
+ * e ciclo de vida são do {@link OnnxPairModel}, o mesmo que o reranker usa.
  */
 public final class OnnxNliChecker implements GroundednessChecker, AutoCloseable {
 
@@ -32,12 +35,22 @@ public final class OnnxNliChecker implements GroundednessChecker, AutoCloseable 
     private final int entailmentIndex;
     private final int labelCount;
     private final double minEntailment;
+    private final boolean copyShortcut;
 
     /**
      * Lê os rótulos, abre o modelo e pontua um par de teste, para um modelo errado falhar na partida e não na primeira
      * resposta. Se a conferência final falhar, o modelo já aberto (memória nativa) é fechado antes de a exceção sair.
      */
     public OnnxNliChecker(NliFiles files, GuardProperties properties) {
+        this(files, properties, true);
+    }
+
+    /**
+     * Como o construtor padrão; {@code copyShortcut = false} desliga o atalho de cópia de frase completa do trecho, só
+     * para medir o quanto ele ajuda (a avaliação da Task 20 faz isso).
+     */
+    public OnnxNliChecker(NliFiles files, GuardProperties properties, boolean copyShortcut) {
+        this.copyShortcut = copyShortcut;
         this.minEntailment = properties.minEntailment();
         Map<Integer, String> labels = readLabels(files);
         this.labelCount = labels.size();
@@ -95,18 +108,24 @@ public final class OnnxNliChecker implements GroundednessChecker, AutoCloseable 
     @Override
     public boolean isSupported(String sentence, List<String> evidence) {
         model.ensureOpen();
-        List<String> premises = new ArrayList<>(evidence.size());
-        for (String text : evidence) {
-            if (!text.isBlank()) {
-                premises.add(text);
-            }
-        }
-        if (premises.isEmpty()) {
+        List<String> texts = evidence.stream().filter(text -> !text.isBlank()).toList();
+        if (texts.isEmpty()) {
             return false;
         }
         if (sentence.isBlank()) {
             return true;
         }
+        if (!IdentifierCheck.allKnown(sentence, texts)) {
+            return false;
+        }
+        List<String> allWindows = new ArrayList<>();
+        for (String text : texts) {
+            if (copyShortcut && PremiseWindows.copiedFrom(text, sentence)) {
+                return true;
+            }
+            allWindows.addAll(PremiseWindows.of(text, sentence));
+        }
+        List<String> premises = PremiseWindows.best(allWindows, sentence, PremiseWindows.MAX_PAIRS);
         try {
             for (double probability : entailment(premises, model.limit(sentence))) {
                 if (probability >= minEntailment) {

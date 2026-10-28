@@ -34,11 +34,21 @@ public final class Retriever {
     private final SearchIndex index;
     private final Optional<Reranker> reranker;
     private final RetrievalProperties properties;
+    private final RerankQueryCleaner cleaner;
 
     public Retriever(SearchIndex index, Optional<Reranker> reranker, RetrievalProperties properties) {
+        this(index, reranker, properties, RerankQueryCleaner.NONE);
+    }
+
+    public Retriever(
+            SearchIndex index,
+            Optional<Reranker> reranker,
+            RetrievalProperties properties,
+            RerankQueryCleaner cleaner) {
         this.index = index;
         this.reranker = reranker;
         this.properties = properties;
+        this.cleaner = cleaner;
     }
 
     /** {@code true} quando o score vem do reranker; {@code false} quando é a cobertura lexical do fallback. */
@@ -70,12 +80,32 @@ public final class Retriever {
             return List.of();
         }
         if (reranker.isPresent()) {
-            return reranker.get().rerank(query, candidates).stream()
+            return reranker.get().rerank(rerankText(query), candidates).stream()
                     .sorted(Comparator.comparingDouble(ScoredChunk::score).reversed())
                     .limit(limit)
                     .toList();
         }
         return fallback(query, candidates.stream().limit(limit).toList());
+    }
+
+    /**
+     * O melhor trecho da busca híbrida (antes do reranker) dentro do filtro, com o score que o reranker lhe dá. Serve à
+     * comparação por versão: um trecho que o reranker subestima não pode virar "a documentação não menciona isso".
+     */
+    public Optional<ScoredChunk> hybridTop(String query, SearchFilter filter) {
+        List<Chunk> first = index.search(query, filter, 1);
+        if (first.isEmpty()) {
+            return Optional.empty();
+        }
+        if (reranker.isPresent()) {
+            return reranker.get().rerank(rerankText(query), first).stream().findFirst();
+        }
+        return fallback(query, first).stream().findFirst();
+    }
+
+    private String rerankText(String query) {
+        String cleaned = cleaner.clean(query);
+        return cleaned == null || cleaned.isBlank() ? query : cleaned;
     }
 
     private static List<ScoredChunk> fallback(String query, List<Chunk> ordered) {

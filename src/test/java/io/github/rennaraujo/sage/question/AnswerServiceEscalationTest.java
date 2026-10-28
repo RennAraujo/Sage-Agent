@@ -389,6 +389,46 @@ class AnswerServiceEscalationTest {
     }
 
     @Test
+    void versionWhoseOnlyChunkIsThatVersionsBestHybridHitIsNeverReportedAsAbsent() {
+        stubPerVersion(Map.of(
+                "17", List.of(chunk("publico/java/17/ruido.md", "17", 0.1)),
+                "21", List.of(chunk("publico/java/21/records.md", "21", 0.9))));
+        when(retriever.hybridTop(anyString(), any())).thenAnswer(call -> {
+            SearchFilter filter = call.getArgument(1);
+            return filter.versions().equals(List.of("17"))
+                    ? Optional.of(chunk("publico/java/17/records.md", "17", 0.1))
+                    : Optional.empty();
+        });
+        TieredModel model = new TieredModel(
+                Flux.error(new AssertionError("FAST não deveria ser chamado")),
+                Flux.just(
+                        new ModelEvent.TextDelta("No Java 17 existe [1]. No Java 21 existe [2]."),
+                        new ModelEvent.Completed()));
+
+        service(model).answer(new AnswerRequest("diferença entre java 17 e java 21", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.events)
+                .doesNotContain("text:A documentação do Java 17 disponível não menciona isso.")
+                .contains("text:Documentação consultada: Java 17", "text:Documentação consultada: Java 21");
+        assertThat(model.prompts.get(0).user()).contains("publico/java/17/records.md");
+    }
+
+    @Test
+    void hybridHitOfAnotherVersionDoesNotRescueAnEmptyGroup() {
+        stubPerVersion(Map.of("21", List.of(chunk("publico/java/21/records.md", "21", 0.9))));
+        when(retriever.hybridTop(anyString(), any()))
+                .thenReturn(Optional.of(chunk("publico/java/25/records.md", "25", 0.1)));
+        TieredModel model = new TieredModel(
+                Flux.error(new AssertionError("FAST não deveria ser chamado")),
+                Flux.just(new ModelEvent.TextDelta("No Java 21 existe [1]."), new ModelEvent.Completed()));
+
+        service(model).answer(new AnswerRequest("diferença entre java 17 e java 21", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.events).contains("text:A documentação do Java 17 disponível não menciona isso.");
+        assertThat(model.prompts.get(0).user()).doesNotContain("java/25");
+    }
+
+    @Test
     void unusedSlotsGoToVersionsThatFilledTheirShare() {
         List<ScoredChunk> many = new ArrayList<>();
         for (int i = 0; i < 7; i++) {

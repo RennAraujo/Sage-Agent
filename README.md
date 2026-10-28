@@ -16,6 +16,8 @@ Precisa de JDK 25. O Maven Wrapper já vem no repositório, então não é preci
 
 O `verify` roda o Spotless (formatação), o Checkstyle, o SpotBugs, os testes e o JaCoCo, que exige 80% de cobertura de linhas. Se a formatação reclamar, `.\mvnw.cmd spotless:apply` corrige.
 
+As avaliações pesadas (perguntas-gabarito, latência e calibração) ficam fora do `verify` padrão. `.\mvnw.cmd verify -Peval` roda tudo, cobra os orçamentos de latência e gera `target/eval-report.md`; precisa dos modelos em `models/` (`scripts/download-models`). Os testes de segurança (injeção, segredo, texto em claro, tokenizers) rodam nos dois. Os números e as decisões estão em [docs/decisoes.md](docs/decisoes.md#calibração-com-as-perguntas-gabarito).
+
 ## Modelo de embeddings
 
 A busca híbrida usa o `multilingual-e5-small` (470 MB), que não vai para o git. Baixe-o antes de rodar os testes que o usam e antes de subir a aplicação com busca por significado:

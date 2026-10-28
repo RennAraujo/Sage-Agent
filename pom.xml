@@ -36,6 +36,10 @@
         <djl.tokenizers.version>0.39.0</djl.tokenizers.version>
         <spring-ai.version>2.0.2</spring-ai.version>
         <wiremock.version>3.10.0</wiremock.version>
+        <!-- Grupos JUnit fora do verify padrão: "eval" são as avaliações pesadas (-Peval as liga). -->
+        <test.excluded.groups>eval</test.excluded.groups>
+        <!-- Orçamentos de latência (relógio de parede) só são cobrados com -Peval; no verify padrão vale um teto de sanidade. -->
+        <test.latency.strict>false</test.latency.strict>
     </properties>
 
     <dependencyManagement>
@@ -183,6 +187,17 @@
 
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludedGroups>${test.excluded.groups}</excludedGroups>
+                    <systemPropertyVariables>
+                        <sage.latency.strict>${test.latency.strict}</sage.latency.strict>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-failsafe-plugin</artifactId>
             </plugin>
 
@@ -304,4 +319,18 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            -Peval roda também as avaliações pesadas (perguntas-gabarito, latência e calibração, tag "eval") e gera
+            target/eval-report.md. Precisa dos modelos ONNX em models/ (scripts/download-models) e leva alguns minutos.
+        -->
+        <profile>
+            <id>eval</id>
+            <properties>
+                <test.excluded.groups/>
+                <test.latency.strict>true</test.latency.strict>
+            </properties>
+        </profile>
+    </profiles>
 </project>

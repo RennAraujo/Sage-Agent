@@ -7,6 +7,7 @@ import io.github.rennaraujo.sage.crypto.EnvelopeCipher;
 import io.github.rennaraujo.sage.crypto.LocalKeyProvider;
 import io.github.rennaraujo.sage.storage.BlobStorage;
 import io.github.rennaraujo.sage.storage.LocalBlobStorage;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -17,9 +18,9 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 class GapRegistryTest {
 
@@ -28,8 +29,7 @@ class GapRegistryTest {
     private static final String ACTOR = "renan-ator-secreto";
     private static final Instant T0 = Instant.parse("2026-10-27T12:00:00Z");
 
-    @TempDir
-    Path dir;
+    private Path dir;
 
     private EnvelopeCipher cipher;
     private BlobStorage blobs;
@@ -51,8 +51,14 @@ class GapRegistryTest {
         }
     };
 
+    @AfterEach
+    void cleanUp() {
+        ScratchDirs.delete(dir);
+    }
+
     @BeforeEach
     void setUp() {
+        dir = ScratchDirs.create("sage-gaps-");
         byte[] master = new byte[MASTER_KEY_BYTES];
         new SecureRandom().nextBytes(master);
         cipher = new EnvelopeCipher(new LocalKeyProvider(master));
