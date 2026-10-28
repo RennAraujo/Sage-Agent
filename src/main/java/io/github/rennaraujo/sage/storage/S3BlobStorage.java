@@ -10,6 +10,7 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Object;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 
 /** Blobs num bucket S3. O conteúdo já chega cifrado pelo {@code EnvelopeCipher}; o bucket só vê bytes opacos. */
 public final class S3BlobStorage implements BlobStorage {
@@ -25,7 +26,15 @@ public final class S3BlobStorage implements BlobStorage {
     @Override
     public void put(String key, byte[] content) {
         BlobKeys.requireValidKey(key);
-        s3.putObject(PutObjectRequest.builder().bucket(bucket).key(key).build(), RequestBody.fromBytes(content));
+        // Pede SSE-KMS (com a chave padrão do bucket) de forma explícita: assim uma política de bucket que nega
+        // escrita sem esse cabeçalho não bloqueia o Sage, e o conteúdo, que já chega cifrado, ganha a segunda camada.
+        s3.putObject(
+                PutObjectRequest.builder()
+                        .bucket(bucket)
+                        .key(key)
+                        .serverSideEncryption(ServerSideEncryption.AWS_KMS)
+                        .build(),
+                RequestBody.fromBytes(content));
     }
 
     @Override

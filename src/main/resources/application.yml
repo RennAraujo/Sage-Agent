@@ -59,7 +59,7 @@ sage:
     # Teto de caracteres por trecho do índice (bloco de código único pode passar). Os candidatos são os trechos já
     # fundidos (BM25 + vetores, por RRF) que vão ao reranker, e o custo dele é linear neles: com 8 candidatos e 128 tokens
     # o pipeline antes do modelo fica em ~130 ms (p50) contra ~500 ms com 12 e 256 em trechos de 1500 caracteres.
-    # Calibrado na Task 20 (docs/decisoes.md); com um acervo bem maior, reavalie junto com o min-score.
+    # Calibração e valores provisórios em docs/decisoes.md; com um acervo bem maior, reavalie junto com o min-score.
     max-chunk-chars: 1500
     candidates: 8
     # Profundidade de cada lista da primeira etapa (BM25 e vetores) antes da fusão. Barata (alguns ms), então fica funda;
@@ -74,7 +74,7 @@ sage:
     # 0.0 = qualquer candidato passa. Consumido pelo roteamento da pergunta.
     min-score-without-reranker: 0.0
     # Score mínimo do melhor trecho (nota do reranker) para a pergunta ir ao modelo. Abaixo disso, resposta fixa
-    # "Não encontrei isso na documentação disponível." sem gastar token. Calibrado na Task 20 com 106 perguntas (tem de ser
+    # "Não encontrei isso na documentação disponível." sem gastar token. Calibrado com 106 perguntas (tem de ser
     # refeito no acervo real): o melhor trecho das de fora do acervo vai até 0.071 e o das respondíveis começa em 0.058,
     # então as duas faixas se sobrepõem em 0.058-0.071 e nenhum limiar separa tudo. Em 0.10 as 10 de fora são recusadas e
     # 1 pergunta respondível (0.058) também; ver docs/decisoes.md.

@@ -1,6 +1,6 @@
 # Fluxo de uma pergunta
 
-Este documento acompanha uma pergunta do momento em que chega até a resposta. Cada etapa ganha uma seção conforme é implementada; hoje estão aqui a análise da pergunta, o caminho até a resposta com o modelo rápido (Haiku) e os dois jeitos de chegar ao modelo forte (Sonnet): a escalada pedida pelo próprio Haiku e a comparação entre versões.
+Este documento acompanha uma pergunta do momento em que chega até a resposta: a análise da pergunta, o caminho com o modelo rápido (Haiku), os dois jeitos de chegar ao modelo forte (Sonnet, por escalada ou por comparação entre versões), o fallback web, as perguntas de fluxo, o cache e a conversa. No fim, a seção [Exemplos por caminho](#exemplos-por-caminho-e-tempos) mostra execuções reais e, onde o Bedrock seria necessário, o que dá para afirmar com os tempos medidos.
 
 ## Entendendo a pergunta
 
@@ -69,7 +69,7 @@ A busca usa a versão resolvida no filtro (`SearchFilter` com fontes, linguagem 
 - `STRONG_MODEL` se a pergunta é COMPARISON. Comparar versões é justamente "análise entre várias fontes", o caso em que o Haiku escalaria de qualquer jeito; mandar direto economiza a primeira chamada.
 - `FAST_MODEL` nos outros casos.
 
-O limiar depende de o reranker estar ligado. Com ele, o score é a nota do cross-encoder e o corte é `sage.retrieval.min-score` (0.35, a calibrar na Task 20 com perguntas reais). Sem ele, o score vira cobertura lexical, outra escala, e o corte é `sage.retrieval.min-score-without-reranker` (0.0 por padrão, ou seja, qualquer trecho passa). Como o reranker existe ou não desde o boot, o limiar é fixado quando o `RouteDecider` é criado.
+Esta é a decisão que mais pesa na qualidade percebida, e por isso a mais sujeita a ajuste. O limiar depende de o reranker estar ligado. Com ele, o score é a nota do cross-encoder e o corte é `sage.retrieval.min-score` (0.10, calibrado com 106 perguntas do acervo de avaliação; os números e o que o valor custa estão em [decisoes.md](decisoes.md#calibração-com-as-perguntas-gabarito), e ele precisa ser refeito no acervo real). Sem ele, o score vira cobertura lexical, outra escala, e o corte é `sage.retrieval.min-score-without-reranker` (0.0 por padrão, ou seja, qualquer trecho passa). Como o reranker existe ou não desde o boot, o limiar é fixado quando o `RouteDecider` é criado.
 
 ### 3. Metadata e as linhas de versão
 
@@ -100,7 +100,7 @@ O modelo é o FAST (`sage.models.fast-id`, Haiku no Bedrock), com temperatura 0 
 
 Cada pedaço de texto que chega passa pelo `AnswerGuard`, que junta os pedaços até fechar uma frase e só então decide se ela sai. A frase aprovada vira um evento `text`; a reprovada some e só aumenta a contagem de `frasesDescartadas`. Depois das regras de citação, a frase ainda passa pela verificação de fundamentação: um modelo de NLI confere a frase (sem os marcadores) contra só os trechos que ela cita, e a que eles não sustentam, ou que estoura o prazo de `sage.guard.nli-timeout-per-sentence`, é descartada e contada. Todo segmento que seria mostrado, frase ou bloco, passa também pelo filtro de segredos; o que tem credencial vira "[conteúdo removido: possível segredo]" e entra em `segredosRemovidos`. Blocos de código e os textos fixos do código não passam pelo NLI. A verificação roda fora da thread do SDK do modelo e conta contra o prazo total de `sage.models.timeout` (detalhes em [seguranca.md](seguranca.md#verificação-de-fundamentação)). Bloco de código sai inteiro, como um único `text`, se vier logo depois de uma frase aprovada, se estiver fechado e se não for prosa disfarçada; cada bloco consome a frase que o justificou. As regras completas estão em [seguranca.md](seguranca.md#contra-delírio). Se nada passar, a resposta é "A documentação disponível não cobre isso.". O modelo tem prazo total de `sage.models.timeout` (50 s), do pedido ao último token; estourou, o stream do modelo é cancelado e o cliente recebe um evento `error`. Se o cliente fechar a conexão, o emitter avisa o serviço e a chamada ao Bedrock é cancelada na hora.
 
-No caminho FAST o prompt de sistema ganha uma linha a mais, "Se os documentos não bastarem ou a pergunta exigir análise entre várias fontes, chame `escalate` antes de escrever qualquer texto.", e a chamada declara a ferramenta `escalate`. O que acontece quando ele a chama está na seção seguinte. O tratamento de FLOW (diagramas) é da Task 13.
+No caminho FAST o prompt de sistema ganha uma linha a mais, "Se os documentos não bastarem ou a pergunta exigir análise entre várias fontes, chame `escalate` antes de escrever qualquer texto.", e a chamada declara a ferramenta `escalate`. O que acontece quando ele a chama está na seção seguinte.
 
 ### 4a. Escalada para o Sonnet
 
@@ -151,7 +151,8 @@ O log de aplicação tem uma linha por pergunta com rota, modelo, se houve escal
 
 ### Limites deste caminho
 
-- A fundamentação é conferida por um modelo de NLI com amostra de teste pequena (29 pares) e limiar 0,5 não calibrado: ele pode barrar uma frase correta que o trecho só sugere e deixar passar uma distorção sutil. Sem os arquivos do modelo a conferência fica desligada e o guard volta a validar só a forma (a imagem Docker não sobe nesse caso). O custo é de 0,2 a 0,3 s por frase no caso típico, até mais de 1 s com muitos trechos grandes citados.
+- A fundamentação é conferida por um modelo de NLI calibrado com 69 frases rotuladas (30 sustentadas e 39 não sustentadas) e limiar 0,5: nesse conjunto aceita 100% das sustentadas e rejeita 97,4% das erradas, mas o conjunto foi usado também para ajustar o guard, então esses números são otimistas. O NLI pode barrar uma frase correta que o trecho só sugere e deixar passar uma distorção sutil. Sem os arquivos do modelo a conferência fica desligada e o guard volta a validar só a forma (a imagem Docker não sobe nesse caso). O custo é de 0,2 a 0,3 s por frase no caso típico, até mais de 1 s com muitos trechos grandes citados.
+- A decisão `NOT_DOCUMENTED` considera só o melhor trecho. Uma pergunta cujo melhor trecho pontua 0,09 vai para "Não encontrei isso na documentação disponível." mesmo que o acervo tenha a resposta mal escrita: na calibração, uma pergunta respondível de 106 caiu assim.
 - Uma frase termina em quebra de linha ou em ponto, exclamação ou interrogação seguidos de espaço e de algo que começa frase (maiúscula, dígito, crase, colchete). Isso mantém "e.g. toList()", "p. ex. collect()" e "aprox. dez" inteiros, mas "aprox. 3 ms" ainda parte a frase (dígito), e uma frase seguinte que comece em minúscula gruda na anterior. Título Markdown sem citação é descartado.
 - Cada `text` é uma frase solta: a estrutura de parágrafos e listas da resposta do modelo se perde, e a interface remonta o texto como achar melhor.
 - O contexto da conversa (cache e continuação) vive na memória de cada instância. Com mais de uma instância atrás de um balanceador sem afinidade de sessão, "e no 17?" pode cair numa instância que não conhece o `conversaId` e ser analisada sozinha.
@@ -273,3 +274,53 @@ Um acerto de cache audita como qualquer pergunta: `QUESTION_ASKED` antes de emit
 - Duas perguntas com o mesmo sentido e palavras diferentes ("como usar toList" e "uso do toList") não compartilham resposta; a normalização é só de forma, sem semântica.
 - Ao salvar ou apagar qualquer documento, todo o cache vai embora, inclusive respostas que nada tinham a ver com ele.
 - Conversa e cache são por instância e se perdem num restart.
+
+## Exemplos por caminho e tempos
+
+Os tempos abaixo vêm de duas fontes que convém não misturar. As execuções da primeira parte são reais: a aplicação foi empacotada deste repositório, subida com os modelos ONNX de embeddings e reranker, alimentada com o acervo de avaliação (`src/test/resources/eval/acervo`, 36 documentos escritos para o teste, sem o NLI e sem Bedrock), e consultada com `curl` numa máquina de desenvolvimento (Windows, 16 processadores lógicos). A segunda parte descreve os caminhos que dependem do Bedrock, que não foi chamado aqui; nela os números de busca e de NLI são medianas do relatório de avaliação (`.\mvnw.cmd verify -Peval`, 30 perguntas do gabarito), e o que não foi medido está dito como tal.
+
+### Execuções reais
+
+Pergunta fora do acervo, `NOT_DOCUMENTED` sem modelo. "Como fazer um bolo de cenoura?" não casa nenhum nome do catálogo, então a fonte fica `{PUBLIC, INTERNAL}`; a busca devolve cinco trechos, o melhor com score 0,026, abaixo de 0,10:
+
+```
+event:metadata
+data:{"rota":"NOT_DOCUMENTED","scoreMaximo":0.0264,"citacoes":[],"frasesDescartadas":0,
+      "temposMs":{"analise":0,"busca":163}}
+
+event:text
+data:{"texto":"Não encontrei isso na documentação disponível."}
+
+event:done
+data:{"rota":"NOT_DOCUMENTED",...,"temposMs":{"analise":0,"busca":163,"total":168},"documentacaoConsultada":[]}
+```
+
+Outras três execuções da mesma classe deram `busca` de 138, 141 e 153 ms e `total` de 142, 145 e 157 ms; a primeira, com a JVM fria, levou 233 ms só de busca. É o que se espera do relatório (pipeline antes do modelo com p50 de 131 ms e p95 de 263 ms): quase tudo é o reranker pontuando 8 candidatos de 128 tokens. Como a pergunta não tem fonte reconhecida, ela conta como possivelmente interna, e as quatro foram parar em `GET /api/lacunas` (a "capital da França" duas vezes, com `vezes: 2`). É uma consequência da regra de fontes: sem nome reconhecido, o Sage não sabe que a pergunta é pública, e prefere registrar uma lacuna a perder um sinal.
+
+Versão fora do acervo, `NOT_DOCUMENTED` sem modelo e sem busca útil. "Como usar toList em um Stream no Java 8?" com só Java 21 e 25 no acervo:
+
+```
+data:{"rota":"NOT_DOCUMENTED","scoreMaximo":0.0,"citacoes":[],"versaoUsada":"8",
+      "temposMs":{"analise":10,"busca":1}}
+data:{"texto":"Não tenho a documentação do Java 8 no acervo."}
+data:{...,"temposMs":{"analise":10,"busca":1,"total":21},"documentacaoConsultada":[]}
+```
+
+Vinte e um milissegundos de ponta a ponta, porque o código sabe que a versão não existe antes de gastar o reranker. Os 10 ms de análise foram a primeira pergunta do processo; nas seguintes a análise marcou 0.
+
+Pergunta que chega ao modelo sem o Bedrock disponível. "Qual o prazo do estorno no portal-demo?" acha o trecho certo (`pagamento.md`, seção "Estorno", score 0,9988) e vai para o Haiku. Os model ids eram de teste e a máquina não tem credenciais AWS configuradas, então a chamada falhou (`SdkClientException` no log), e o cliente recebe o `metadata` com as cinco citações (busca em 233 ms, na primeira chamada) seguido de `event:error`. É o comportamento descrito na seção do caminho Haiku: o `metadata` sai antes do erro, para o cliente ter o `conversaId`. Não é um exemplo de resposta, e é mostrado só para deixar claro que o primeiro texto de uma resposta real nunca foi medido aqui.
+
+### Caminhos que dependem do Bedrock
+
+O que cada caminho soma, em tempos medidos e não medidos:
+
+| Caminho | O que roda | Tempos medidos | Não medido |
+| --- | --- | --- | --- |
+| `CACHE` | Análise e consulta ao cache; sem busca, sem reranker, sem modelo. | Análise: 0 ms (vem das execuções acima). | O acerto de ponta a ponta. A meta do projeto é menos de 100 ms. |
+| `FAST_MODEL` | Análise, busca híbrida, reranker, prompt, Haiku em streaming, guard frase a frase. | Pipeline antes do modelo: p50 131 ms, p95 263 ms. NLI por frase: p50 127 ms com um trecho citado, 543 ms com cinco. | Latência do Haiku até o primeiro token e a duração do stream. A primeira frase só sai depois de completa e verificada, então o primeiro texto soma o tempo do Haiku até fechar a frase e uns 130 ms de NLI. A meta de 1,5 s não foi confirmada com o Bedrock real. |
+| `STRONG_MODEL` por escalada | O de cima, mais o cancelamento do Haiku e uma segunda chamada. | Os mesmos. | O custo extra: o tempo até o Haiku decidir escalar (normalmente o primeiro token) mais o tempo até o primeiro token do Sonnet. |
+| `STRONG_MODEL` por comparação | Uma busca com reranker por versão, mais uma para a interna se houver; direto ao Sonnet. | Cada busca com reranker tem a mesma ordem de grandeza (uns 137 ms no p50 do relatório); duas versões custam perto do dobro. | O tempo do Sonnet. |
+| Pergunta de fluxo | Expansão de documentos antes do prompt; Sonnet. | A expansão só lê documentos já em memória; não há medição separada. | O tempo do Sonnet, que é proporcional ao contexto (até 24 mil caracteres). |
+| `WEB_FALLBACK` | Brave, até 3 páginas, gravação cifrada, nova busca. | O prazo do fallback inteiro é 8 s (`sage.web.fallback-timeout`). | O tempo real: o ambiente de avaliação não tem chave do Brave. |
+
+Um exemplo de resposta de fluxo, com os eventos que o guard deixa passar, está na seção [Exemplo](#exemplo) de perguntas de fluxo, e a anatomia de um acerto de cache está na seção de [cache](#cache-de-respostas). Elas são ilustrativas, escritas a partir do comportamento testado com um modelo de mentira, e não saída do Bedrock.

@@ -14,6 +14,8 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.ServerSideEncryption;
 
 @Testcontainers(disabledWithoutDocker = true)
 class S3BlobStorageIT {
@@ -42,6 +44,12 @@ class S3BlobStorageIT {
             storage.put("docs/bbb-222", content);
             storage.put("outros/ccc", content);
 
+            assertThat(s3.headObject(HeadObjectRequest.builder()
+                                    .bucket(BUCKET)
+                                    .key("docs/aaa-111")
+                                    .build())
+                            .serverSideEncryption())
+                    .isEqualTo(ServerSideEncryption.AWS_KMS);
             assertThat(storage.get("docs/aaa-111")).hasValue(content);
             assertThat(storage.get("docs/nada")).isEmpty();
             assertThat(storage.list("docs/")).containsExactly("docs/aaa-111", "docs/bbb-222");

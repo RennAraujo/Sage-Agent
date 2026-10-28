@@ -13,6 +13,7 @@ services:
       - /tmp
     volumes:
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro
     env_file: .env
     healthcheck:
       test:

@@ -1,6 +1,8 @@
 # Sage-Agent — Design
 
-Data: 2026-10-27 · Status: para aprovação · Repositório: `E:\Code\Sage-Agent` → `https://github.com/RennAraujo/Sage-Agent.git`
+Data: 2026-10-27 · Status: implementado · Repositório: `https://github.com/RennAraujo/Sage-Agent.git`
+
+Este é o desenho aprovado no começo do projeto, mantido como foi escrito para dar para comparar com o que existe. Onde a implementação mudou o desenho, o trecho está marcado com "Mudança" e a seção 18 reúne todas as diferenças, com o motivo. O estado atual do sistema está em [arquitetura.md](arquitetura.md) e nos outros documentos listados na seção 15.
 
 ## 1. Intenção
 
@@ -18,6 +20,7 @@ Público: começa com a equipe (todos veem toda a documentação), deve poder ex
   - **Linguagens/frameworks públicos** (Java, Spring, etc.), por versão.
   - **Documentação da aplicação da empresa**, incluindo explicação de fluxos.
 - Resposta baseada somente no conteúdo do acervo, sempre com citação.
+- **Versão exata em toda resposta** (requisito acrescentado depois da primeira versão deste desenho): a resposta diz de qual versão da documentação saiu ("Documentação consultada: Java 21"), cada citação carrega a versão, perguntas de disponibilidade entre versões ("isso existe no java 25 ou é exclusivo do java 8?") são respondidas versão a versão, e versão que não está no acervo é dita com todas as letras ("Não tenho a documentação do Java 8 no acervo.").
 - Fallback na web **só para fontes públicas**, resultado salvo criptografado no acervo.
 - Haiku por padrão, Sonnet quando necessário, cache para perguntas repetidas.
 - Mini chat para testar, com painel de diagnóstico.
@@ -39,6 +42,7 @@ Público: começa com a equipe (todos veem toda a documentação), deve poder ex
 - Responder sem citar fonte, ou inventar quando a documentação não cobre (delírio).
 - Seguir instruções escondidas dentro de um documento ou página web (prompt injection).
 - Primeiro texto da resposta acima de ~1,5 s para perguntas respondidas pelo acervo.
+- Resposta que não diz de que versão da documentação saiu, ou que trata "o acervo não tem" como "a linguagem não tem".
 
 ## 5. Stack
 
@@ -92,7 +96,7 @@ Uploads sem frontmatter recebem os campos informados no formulário de upload (f
 - Formatos: `.md`, `.txt`, `.pdf`, `.docx`, `.html` (convertidos para Markdown via Tika). Upload em lote via `.zip` de uma pasta do Obsidian.
 - Validações: tamanho máximo por arquivo e por lote, tipo detectado pelo conteúdo (não pela extensão), proteção contra zip bomb e path traversal, frontmatter obrigatório completo.
 - **Varredura de segredos** antes de cifrar: se o documento contiver padrões de chave de API, token, senha ou chave privada, o upload é recusado com a linha apontada, para o editor limpar e reenviar.
-- Mesmo caminho = substitui (versão anterior mantida pelo versionamento do S3). Exclusão por `DELETE /api/documentos/{id}`.
+- Mesmo caminho = substitui (versão anterior mantida pelo versionamento do S3). Exclusão por `DELETE /api/documentos?id=...`. *Mudança: id que já existe agora dá 409, e só `substituir=true` troca o documento; ver seção 18.*
 - Editores veem **metadados** (caminho, seção, versão, revisado, data); não há endpoint que devolva o conteúdo. Páginas `revisado: false` são aprovadas ou excluídas por metadados.
 
 ## 7. Fluxo de uma pergunta
@@ -124,10 +128,11 @@ flowchart TD
 3. **Extração**: linguagem/versão por regex sobre aliases (tabela pública versionada no repositório + aliases tirados do frontmatter dos documentos). Sem versão → mais recente do acervo, dita na resposta. Continuação de conversa herda linguagem/versão. **Tipo** por regras: `consulta`, `fluxo` ("como funciona", "qual o fluxo", "passo a passo"), `comparacao` (duas versões, "diferença", "migrar").
 4. **Busca híbrida** + **reranker**; o score decide o caminho. Limiares em configuração.
 5. **Explicação de fluxos**: o trecho encontrado é expandido para a seção inteira (ou documento, se pequeno) e para os documentos que ele referencia por wiki-link. Sonnet monta a explicação passo a passo, cita cada passo e, se a documentação descrever as etapas, gera diagrama Mermaid. Se a documentação não detalha o fluxo, diz isso em vez de completar.
-6. **Escalada**: Haiku tem a tool `escalar`; regras diretas mandam `fluxo` e `comparacao` ao Sonnet.
+6. **Escalada**: Haiku tem a tool `escalar` (no código, `escalate`); regras diretas mandam `fluxo` e `comparacao` ao Sonnet. *Mudança: a escalada só vale antes da primeira frase aprovada.*
 7. **Interno sem resposta ou pergunta mista**: nunca vai à web. Sem trecho acima do limiar, responde "não encontrei isso na documentação" **sem chamar LLM** e registra a lacuna.
 8. **Fallback web** (só público): ver seção 9.
 9. **Resposta**: streaming SSE com citações e metadados.
+10. **Versão exata** (requisito acrescentado depois): o código, e não o modelo, emite "Documentação consultada: <Linguagem> <versão>" antes da primeira frase que cita cada fonte, e "Considerei a versão 25, a mais recente disponível." quando a versão foi inferida. Pergunta de disponibilidade ou de diferença entre versões é `comparacao`: uma busca por versão, para uma versão não ocupar o contexto da outra, e o modelo só pode dizer "A documentação do Java 8 disponível não menciona X", nunca "não existe no Java 8". Versão pedida que não está no acervo é dita pelo código, sem modelo.
 
 ## 8. Segurança
 
@@ -148,10 +153,10 @@ flowchart TD
 - **Sem contexto, sem LLM**: se nenhum trecho passa do limiar, a resposta padrão é dada pelo código.
 - **Prompt de sistema estrito**: responder só com os trechos fornecidos; dizer quando não há informação; temperatura 0.
 - **Trechos tratados como dados**: entram delimitados e marcados como conteúdo não confiável; o prompt instrui a ignorar instruções contidas neles. Páginas web passam por sanitização (remoção de scripts, HTML oculto, texto invisível) antes de salvar.
-- **Citação obrigatória e validada**: cada afirmação cita `[n]`; o código confere que toda citação aponta para um trecho realmente enviado. Resposta sem citação válida é refeita uma vez e, se falhar de novo, substituída pela resposta padrão.
+- **Citação obrigatória e validada**: cada afirmação cita `[n]`; o código confere que toda citação aponta para um trecho realmente enviado. Resposta sem citação válida é refeita uma vez e, se falhar de novo, substituída pela resposta padrão. *Mudança: não há "refazer"; o guard valida frase a frase durante o streaming e descarta a frase sem citação (seção 18).*
 - **Verificação de fundamentação**: modelo NLI pequeno (ONNX, CPU) confere se as frases da resposta são sustentadas pelos trechos citados; frases não sustentadas são removidas ou a resposta é marcada como incerta.
 - **Ferramentas mínimas**: o modelo só tem a tool `escalar`. Não acessa URLs, não lê arquivos, não executa nada.
-- **Transparência**: a resposta mostra versão usada e marca fontes `revisado: false` como "fonte não revisada".
+- **Transparência**: a resposta mostra a versão exata usada (seção 7, item 10) e marca fontes `revisado: false` como "fonte não revisada".
 - **Testes de segurança** no conjunto-gabarito: perguntas fora do acervo, documentos com injeção plantada, tentativas de extrair o acervo inteiro.
 
 ## 9. Fallback web
@@ -164,7 +169,7 @@ flowchart TD
 ## 10. API e mini chat
 
 - `POST /api/perguntas` — SSE: texto + metadados (modelo, caminho, score, citações, latência por etapa). Aceita `conversaId`.
-- `POST /api/documentos`, `GET /api/documentos` (metadados), `PATCH /api/documentos/{id}` (aprovar revisão), `DELETE /api/documentos/{id}`.
+- `POST /api/documentos`, `GET /api/documentos` (metadados), `PATCH /api/documentos?id=...` (aprovar revisão), `DELETE /api/documentos?id=...` (o id tem barras, então vai em parâmetro de consulta).
 - `GET /api/lacunas` (editor).
 - `POST /api/importar` (editor) — semeia o acervo a partir de uma URL raiz da allowlist, profundidade limitada.
 - **Mini chat** em `/chat`: HTML + JS puro servido pelo Spring Boot. Pergunta com streaming, aba de upload, lista de documentos (metadados) e painel de diagnóstico por resposta.
@@ -197,7 +202,7 @@ flowchart TD
 - Obsidian como ferramenta de escrita; após upload o documento só existe cifrado. Isso substitui a ideia de sincronizar o acervo por git + Obsidian Git: com "só o agente lê", o acervo não pode ficar legível no git nem em pastas do Obsidian.
 - Acervo no S3 + KMS; índice só em memória.
 - Papéis `leitor` e `editor`; editores veem metadados, nunca conteúdo.
-- Formatos de upload além de `.md` (PDF, DOCX, HTML, ZIP) via Tika.
+- Formatos de upload além de `.md` (PDF, DOCX, HTML, ZIP). Na implementação, o Tika converte o PDF e detecta o tipo; DOCX é lido direto pelo POI e HTML passa por jsoup e flexmark.
 - Upload com segredo detectado é recusado.
 - Fallback web também quando o score é baixo; pergunta mista nunca vai à web.
 - Conversa com continuação curta; cache só na primeira pergunta.
@@ -217,7 +222,7 @@ flowchart TD
 | `docs/fallback-web.md` | Quando dispara, allowlist, sanitização, por que interno nunca vai à web. |
 | `docs/api.md` | Contratos de todos os endpoints, eventos SSE, papéis. |
 | `docs/configuracao.md` | Variáveis de ambiente e limiares, valor padrão e efeito de cada um. |
-| `docs/deploy-aws.md` | ECS, S3, KMS, VPC endpoints, IAM mínima. |
+| `docs/deploy-aws.md` | ECS Fargate, S3, KMS, VPC endpoints, IAM mínima, o que ajustar para rodar na AWS. |
 | `docs/decisoes.md` | Cada decisão importante: contexto, opções, escolha, consequência. |
 | `docs/design.md` | Este documento. |
 
@@ -253,9 +258,30 @@ Cada etapa é um commit próprio com código, testes e documentação da etapa. 
 | 20 | `test: perguntas-gabarito, latência e segurança` | ~30 perguntas por fonte, perguntas fora do acervo, documentos com injeção plantada, busca de texto em claro em disco/logs; relatório contra as metas. |
 | 21 | `docs: documentação completa do projeto` | Revisão final de todos os arquivos da seção 15, com exemplos e tempos reais; `docs/seguranca.md` e `docs/decisoes.md` completos. |
 
-## 17. Deixado para o builder
+## 17. Deixado para o builder (e o que ficou decidido)
 
 - Tamanho de chunk, limiares iniciais, texto do prompt de sistema.
 - Modelos ONNX exatos (embeddings, reranker, NLI), desde que multilíngues e rodando em CPU dentro das metas de latência.
 - Escolha entre Brave Search e Tavily.
 - Estrutura interna de pacotes dentro das regras da seção 12.
+
+Ficaram decididos: chunks de até 1500 caracteres; Brave Search como busca; `multilingual-e5-small` (embeddings), `mmarco-mMiniLMv2-L12` (reranker) e `mDeBERTa-v3-base-xnli` (NLI), todos em ONNX fp32; limiares `min-score` 0.10, `candidates` 8, `search-depth` 30 e `rerank.max-tokens` 128, estes quatro ainda provisórios. As razões e os números estão em [decisoes.md](decisoes.md).
+
+## 18. O que mudou durante a implementação
+
+Esta seção lista onde o sistema construído difere do desenho acima. Cada item tem a explicação completa em [decisoes.md](decisoes.md).
+
+| Desenho original | Como ficou | Por quê |
+| --- | --- | --- |
+| Resposta sem citação válida é refeita uma vez (8.2). | O `AnswerGuard` valida frase a frase durante o streaming e descarta a frase reprovada. Não há segunda chamada. | Com streaming, o usuário já viu o resto quando o problema aparece. Refazer dobraria latência e custo. |
+| Um evento de auditoria por pergunta. | Dois: `QUESTION_ASKED` antes do primeiro evento SSE e `QUESTION_ANSWERED` no fim, em qualquer desfecho. | Fail-closed: sem rastro gravado, nada é transmitido. |
+| Mesmo caminho substitui o documento. | Id existente dá 409; `substituir=true` troca e registra. Fallback web e importação gravam com `saveIfAbsent`. | Evitar sobrescrita silenciosa de documento revisado. |
+| Sem requisito sobre versão na resposta. | Versão exata em toda resposta, perguntas de disponibilidade como comparação por versão, ausência só no molde "não menciona". | Requisito do usuário depois do desenho. |
+| NLI "pequeno". | mDeBERTa-v3-base (1,1 GB, 3,7 GB residentes com os três modelos), com janelas de 2 frases, atalho de cópia literal e checagem de identificadores. | O MiniLM aprovava a contradição ("lista mutável" contra "imutável"). Contêiner precisa de 4 GB. |
+| Primeiro texto em menos de 1,5 s. | A primeira frase só sai depois de completa e verificada pelo NLI. A meta de 200 ms antes do modelo foi medida (p50 131 ms); o primeiro texto de ponta a ponta não foi medido com Bedrock real. | A verificação por frase soma uns 200 ms à primeira frase, além do tempo do Bedrock. |
+| Limiares iniciais "em configuração". | Calibrados com 106 perguntas: `min-score` 0.10, 8 candidatos, profundidade de busca separada (30), 128 tokens no reranker. | Medido; ver [decisoes.md](decisoes.md#calibração-com-as-perguntas-gabarito). Quatro valores seguem provisórios. |
+| Tika para PDF, DOCX e HTML. | Tika só para PDF e detecção de tipo; DOCX por POI, HTML por jsoup e flexmark. | Nenhum caminho pode gravar arquivo temporário com conteúdo, e o parser genérico do Tika grava arquivos temporários em alguns formatos (DOCX e OLE2, por exemplo). |
+| Mini chat com upload, lista e diagnóstico. | Igual, mais as abas de lacunas e importação, e CSP sem scripts nem estilos inline. | Cobrir toda a API. |
+| Escalada em qualquer ponto. | Só vale antes da primeira frase aprovada. | Trocar de modelo no meio deixaria uma resposta com duas vozes. |
+| Comparação com a busca normal. | Uma busca por versão, com teto próprio (`comparison-max-chunks`) e piso de 2 trechos por grupo. | Com uma busca só, a versão com mais texto ocupa o contexto e a outra parece não ter o assunto. |
+

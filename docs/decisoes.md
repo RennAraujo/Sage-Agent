@@ -1,6 +1,6 @@
 # Decisões
 
-Registro das escolhas que mais pesaram no desenho, com o contexto em que foram feitas, o que ficou de fora e o que cada escolha custa. Cada entrada responde a uma pergunta que alguém vai fazer daqui a seis meses: "por que não fizeram do jeito óbvio?".
+Registro das escolhas que mais pesaram no desenho, com o contexto em que foram feitas, o que ficou de fora e o que cada escolha custa. Cada entrada responde a uma pergunta que alguém vai fazer daqui a seis meses: "por que não fizeram do jeito óbvio?". Os números de calibração ficam na última seção, junto com a lista do que ainda é provisório; a comparação com o desenho original está em [design.md](design.md#18-o-que-mudou-durante-a-implementação).
 
 ## Lucene em memória
 
@@ -44,7 +44,7 @@ Registro das escolhas que mais pesaram no desenho, com o contexto em que foram f
 
 **Escolha.** O mMiniLM cross-encoder, no ONNX fp32 oficial, com a revisão `1427fd65` fixada no `models.lock` e sha256 conferido no download e no build da imagem (`reranker.onnx`, 470 MB, e `reranker-tokenizer.json`, 17 MB). É o único dos candidatos que junta multilíngue, ONNX pronto, licença permissiva e tamanho compatível com a CPU.
 
-**Consequência.** Com trechos curtos, 30 pares levam cerca de 260 ms; com os 20 candidatos padrão no teto de 1500 caracteres e pares cortados em 256 tokens (`sage.rerank.max-tokens`), 0,8 a 1 s, sem o corte cerca de 2 s (números, o preço do corte em qualidade e alternativas testadas em [arquitetura.md](arquitetura.md#reranker-e-o-score-que-decide-o-caminho)). A imagem Docker cresce 490 MB. O score é `sigmoid(logit)` e não é calibrado, então o limiar `min-score` de 0,35 é um ponto de partida a validar com perguntas reais. Sem os arquivos do modelo a aplicação continua subindo, com um score de fallback lexical que mantém a ordem da busca híbrida e está documentado como substituto, não equivalente.
+**Consequência.** Com trechos curtos, 30 pares levam cerca de 260 ms; com 20 candidatos no teto de 1500 caracteres e pares cortados em 256 tokens (`sage.rerank.max-tokens`), 0,8 a 1 s, sem o corte cerca de 2 s. Esse foi o ponto de partida; os valores em uso (8 candidatos, 128 tokens) saíram da calibração descrita mais abaixo. Números, o preço do corte em qualidade e alternativas testadas em [arquitetura.md](arquitetura.md#reranker-e-o-score-que-decide-o-caminho). A imagem Docker cresce 490 MB. O score é `sigmoid(logit)` e não é calibrado, então o limiar `min-score` precisa ser calibrado com perguntas reais (feito para o acervo de avaliação, não para o acervo de quem usa). Sem os arquivos do modelo a aplicação continua subindo, com um score de fallback lexical que mantém a ordem da busca híbrida e está documentado como substituto, não equivalente.
 
 ## Escalada pelo próprio Haiku
 
@@ -100,9 +100,37 @@ O MiniLM dá nota maior à contradição do que ao par correto: ele reage ao voc
 
 **Consequência.** A imagem cresce 1,1 GB (a soma dos modelos passa de 2 GB). Em memória, os três modelos juntos levam o processo a cerca de 3,7 GB residentes (o NLI sozinho, uns 1,5 GB), então o contêiner precisa de 4 GB ou mais. A latência é de cerca de 200 ms por frase com dois trechos citados e de 1 a 1,6 s no pior caso (5 trechos no teto); numa resposta de 8 frases isso dá ~1,7 s no caso típico e 8 a 13 s no pior (números em [seguranca.md](seguranca.md#custo-de-latência)). Pagamos isso porque um verificador que aprova a contradição é pior do que nenhum: dá falsa sensação de segurança. Se o custo incomodar, o caminho é reduzir `sage.guard.nli-max-tokens` ou verificar só frases com afirmações técnicas, antes de trocar por um modelo menor. Sem os arquivos, a aplicação sobe com um verificador que aprova toda frase com trecho citado e o guard fica só com citações e segredos; em produção, `sage.guard.require-nli=true` (padrão da imagem Docker) impede isso e faz a partida falhar. O código de sessão, tokenizer e truncamento é um só (`OnnxPairModel`), usado pelo reranker e pelo NLI.
 
+## Guard frase a frase, sem refazer a resposta
+
+*Mudança em relação ao desenho original.* O desenho dizia que uma resposta com frase sem citação seria refeita uma vez. Com streaming isso não funciona: quando o problema aparece, o usuário já viu as frases anteriores. As opções eram segurar a resposta inteira até validar (perde o streaming, e a primeira frase só aparece depois de todo o tempo do modelo), validar no fim e avisar que algo estava errado (o usuário já leu), ou validar cada frase antes de soltá-la.
+
+Ficou a terceira. O `AnswerGuard` junta os pedaços do stream até fechar uma frase, confere citações, ausência, identificadores, NLI e segredos, e só então emite o `text`. A frase reprovada some e aumenta `frasesDescartadas`. Não há segunda chamada ao modelo. O custo é que a resposta pode sair com buracos (a frase descartada talvez fosse a ponte entre duas outras), que cada `text` é uma frase solta sem a estrutura de parágrafos do modelo, e que o primeiro texto aparece só quando a primeira frase termina e passa na verificação. Resposta podada não vai para o cache, para a segunda tentativa ter a chance de vir inteira. As regras do guard estão em [seguranca.md](seguranca.md#contra-delírio).
+
+## Auditoria em duas fases
+
+*Mudança em relação ao desenho original.* O desenho previa um evento de auditoria por pergunta, gravado no fim. Mas a regra do projeto é que não existe resposta sem rastro, e um evento gravado no fim não a cumpre: o stream já foi enviado quando a gravação falha. Gravar só no começo também não serve, porque não registra o que foi de fato entregue (escalada, frases citadas, desfecho).
+
+Por isso são dois eventos. `QUESTION_ASKED` é gravado antes do primeiro evento SSE, com rota, modelo e os documentos enviados ao modelo; se falhar, nada é transmitido. `QUESTION_ANSWERED` é gravado em qualquer desfecho (`completed`, `interrupted`, `failed`), com a rota e o modelo finais e os documentos citados nas frases aprovadas; numa resposta completa ele sai antes do `done`, e se falhar o cliente recebe `error` em vez de `done`. O custo são duas escritas cifradas por pergunta (a primeira no caminho crítico, dentro do orçamento de preparação) e um detalhe de leitura: `QUESTION_ASKED` registra o modelo rápido mesmo quando a pergunta depois escala, e é o `QUESTION_ANSWERED` que reconcilia. Nenhum dos dois leva texto da pergunta ou da resposta.
+
+## Upload não sobrescreve em silêncio
+
+*Mudança em relação ao desenho original.* No desenho, enviar um documento com id existente o substituía. Num acervo que a equipe alimenta por zip, isso apaga uma versão revisada com um único arraste. Hoje um id existente dá 409 e nada é gravado (num zip, uma entrada em conflito recusa o lote todo), e só `substituir=true` troca o documento, com o id listado em `substituidos` e o evento de auditoria marcado como substituição.
+
+A gravação que não pode sobrescrever (fallback web e importação) usa `DocumentStore.saveIfAbsent`, que confere e grava sob o lock do id. O upload ainda faz a conferência e a gravação em dois passos, então dois envios simultâneos do mesmo id novo podem passar os dois e o segundo vence sem 409. É uma janela estreita num endpoint só de `EDITOR`, e a correção (usar `saveIfAbsent` quando `substituir=false`) é pequena, mas não foi feita.
+
+## A versão exata em toda resposta
+
+*Requisito acrescentado depois do desenho.* Quem pergunta precisa saber, sem abrir as citações, de qual versão da documentação a resposta saiu. A decisão foi não delegar isso ao modelo: o código emite a linha "Documentação consultada: Java 21" antes da primeira frase que cita cada fonte, o `done` traz a mesma informação estruturada em `documentacaoConsultada`, e cada citação carrega a versão. Quando a versão foi inferida (a pergunta citou a linguagem, não a versão), o código avisa com "Considerei a versão 25, a mais recente disponível.". Versão pedida que não está no acervo vira "Não tenho a documentação do Java 8 no acervo.", em vez de uma resposta sobre outra versão com cara de certa.
+
+Esse requisito arrastou três decisões: perguntas de disponibilidade ("isso existe no java 25 ou é exclusivo do java 8?") são classificadas como COMPARISON e respondidas versão a versão (seção anterior); a ausência só pode ser dita no molde "A documentação do Java 8 disponível não menciona X", nunca como "não existe"; e uma resposta de cache reemite as linhas de versão junto com o texto, em vez de repetir só as frases do modelo.
+
+## Cache e conversa em memória, por instância
+
+Cache de respostas, contexto de conversa, baldes de rate limit, lacunas indexadas e jobs de importação ficam na memória do processo. A alternativa (Redis, por exemplo) acrescentaria um serviço, credenciais e um lugar onde respostas derivadas do acervo existiriam fora do processo, que é o que o projeto evita. O custo é conhecido: com mais de uma instância, o limite de requisições multiplica pelo número de réplicas, uma continuação ("e no 17?") pode cair numa instância que não conhece a conversa, e cada réplica reconstrói o seu índice. A decisão é rodar uma task só (veja [deploy-aws.md](deploy-aws.md)) e tratar o multi-instância como trabalho futuro, não como configuração.
+
 ## Calibração com as perguntas-gabarito
 
-**Contexto.** Até a Task 19 os números de relevância eram palpites: `min-score` 0.35 "a validar com perguntas reais", 20 candidatos e 256 tokens no reranker herdados de medições feitas com um lote isolado. A Task 20 criou um acervo de avaliação pequeno (`src/test/resources/eval/acervo`: 8 documentos de Java 21, 10 de Java 25, 5 de Spring Boot 3.5, 6 de Spring Boot 4.1 e 8 da aplicação interna `portal-demo`, escritos para o teste) e `eval/perguntas.yml` com 106 perguntas: 60 públicas, 36 internas e 10 fora do acervo (5 delas de assunto vizinho ao acervo, de propósito). Os modelos são os reais (embeddings, reranker, NLI); o modelo de linguagem é um fake determinístico que cita a primeira frase do melhor trecho de cada versão ou, em outro teste, escreve paráfrases em pt-BR. O relatório sai em `target/eval-report.md` com `.\mvnw.cmd verify -Peval`.
+**Contexto.** No começo os números de relevância eram palpites: `min-score` 0.35 "a validar com perguntas reais", 20 candidatos e 256 tokens no reranker herdados de medições feitas com um lote isolado. Para trocar palpite por medida foi criado um acervo de avaliação pequeno (`src/test/resources/eval/acervo`: 8 documentos de Java 21, 10 de Java 25, 5 de Spring Boot 3.5, 6 de Spring Boot 4.1 e 8 da aplicação interna `portal-demo`, escritos para o teste) e `eval/perguntas.yml` com 106 perguntas: 60 públicas, 36 internas e 10 fora do acervo (5 delas de assunto vizinho ao acervo, de propósito). Os modelos são os reais (embeddings, reranker, NLI); o modelo de linguagem é um fake determinístico que cita a primeira frase do melhor trecho de cada versão ou, em outro teste, escreve paráfrases em pt-BR. O relatório sai em `target/eval-report.md` com `.\mvnw.cmd verify -Peval`.
 
 **Números medidos** (16 processadores lógicos, Windows 11, Java 25, valores de produção do `application.yml` após a calibração):
 
@@ -147,9 +175,9 @@ O limiar tem de ser refeito no acervo real, junto com `max-tokens` e `candidates
 | longos | 8 | 128 | 100% | 131 ms |
 | longos | 6 | 128 | 100% | 96 ms |
 
-(profundidade 30; com profundidade 12 os acertos e tempos são os mesmos nesta escala. A grade completa tem as 24 combinações.) Duas decisões saíram daí, e a segunda contraria o padrão que o controlador sugeriu:
+(profundidade 30; com profundidade 12 os acertos e tempos são os mesmos nesta escala. A grade completa tem as 24 combinações.) Duas decisões saíram daí:
 
-- `max-tokens` fica em 128 e não volta a 256: o critério era voltar a 256 a menos que 128 mantivesse a recuperação a 1 ponto nos trechos longos, e a mantém (100% nos dois). A ressalva é que o acerto satura em 100% neste acervo pequeno, então ele não separa 128 de 256; o que separa é o tempo (131 contra 322 ms com 8 candidatos). Se o acervo real perder recuperação, 256 é o primeiro botão.
+- `max-tokens` fica em 128 e não volta a 256, mas esse valor é provisório e depende de uma decisão do dono do projeto. O critério era voltar a 256 a menos que 128 mantivesse a recuperação a 1 ponto nos trechos longos, e a mantém (100% nos dois). Só que o acerto satura em 100% neste acervo pequeno, então ele não separa 128 de 256; o que separa é o tempo (131 contra 322 ms com 8 candidatos). Isso coloca frente a frente a meta de 200 ms antes do modelo e a qualidade em trechos longos: com 128 tokens o reranker vê só uns 100 tokens de um trecho de 1500 caracteres, e a parte que responde pode estar no fim. A avaliação não tem como dizer qual dos dois pesa mais num acervo real. Se o acervo real perder recuperação, 256 é o primeiro botão, ao preço de passar da meta de latência.
 - `candidates` fica em 8 e não em 12: com 12 candidatos o reranker sozinho leva ~200 ms, e o pipeline antes do modelo passa da meta de 200 ms (p50 > 200 ms). Com a profundidade em 30 a recuperação não depende mais de ter muitos candidatos, que era o motivo de querer 12.
 
 **`sage.guard.min-entailment`: fica em 0.5, mas o guard mudou.** O primeiro conjunto de frases (22 sustentadas e 16 não) dava 95% e 100%, e escondia dois problemas que o conjunto novo (30 sustentadas e 39 não sustentadas, incluindo negações, versões trocadas, números trocados e nomes de API errados) e o teste de ponta a ponta mostraram:
@@ -161,6 +189,15 @@ O limiar tem de ser refeito no acervo real, junto com `max-tokens` e `candidates
 Resultado com 0,5 e janelas de 2: sustentadas aceitas 100% (30/30), não sustentadas rejeitadas 97,4% (38/39; a que passa é a troca de versão "@MockBean e @SpyBean foram removidos no Spring Boot 3.5", que o trecho do 3.5 torna plausível), cópias literais 100%. De 0,4 a 0,7 o resultado é o mesmo; abaixo de 0,4 a rejeição cai (92,3% em 0,3, 84,6% em 0,1), então 0,5 fica no meio do platô e baixar o limiar não é necessário. No guard de produção, de ponta a ponta com o `AnswerService`, o fake que só diz coisas corretas teve 98,7% das cópias e 92,0% das paráfrases mantidas (piso 85%). As duas paráfrases perdidas ("Toda chamada de cobrança ao gateway tem timeout de 8 segundos" e a do `Stream.toList()`) foram reprovadas pelo NLI, nenhuma pelo identificador de código (o relatório marca a causa de cada perda). Uma ressalva de método: as 30 paráfrases sustentadas serviram tanto para escolher as janelas, o limiar e as checagens quanto para medir o resultado final; os 92% e os 97,4% são, portanto, otimistas, e um conjunto de teste separado, escrito por quem não viu os resultados, é o que falta.
 
 Latência do NLI: com 5 trechos citados o p50 é 543 ms e o p95 706 ms, folgado contra o prazo de 1500 ms por frase depois do teto de 8 pares (sem o teto o p95 passava de 1300 ms). Uma frase que estoura o prazo é descartada (falha fechada), então numa máquina bem mais lenta o guard ainda pode descartar frases corretas citando muitos trechos.
+
+**Valores provisórios.** Quatro números do `application.yml` foram calibrados no acervo de avaliação e precisam ser refeitos no acervo real:
+
+| Propriedade | Valor | Por que é provisório |
+| --- | --- | --- |
+| `sage.retrieval.min-score` | 0.10 | As faixas de score das perguntas respondíveis (a partir de 0,058) e das de fora do acervo (até 0,071) se sobrepõem; 0.10 recusa as 10 de fora e uma respondível. Depende da distribuição do acervo. |
+| `sage.retrieval.candidates` | 8 | Escolhido pela meta de 200 ms; com acervo grande, 6 a 8 candidatos para 5 vagas deixam pouco o que reordenar. |
+| `sage.retrieval.search-depth` | 30 | Medido só em acervo pequeno, onde profundidade 12 e 30 dão os mesmos acertos. |
+| `sage.rerank.max-tokens` | 128 | Pendente de decisão do dono do projeto: meta de 200 ms contra qualidade em trechos longos (acima). |
 
 **O que a avaliação mostrou e não está resolvido.**
 

@@ -18,7 +18,7 @@ sage:
 
 A chave é o mesmo id de `aliases-publicos.yml`. Um host vale se for exatamente o domínio ou um subdomínio dele (`docs.oracle.com` e `download.docs.oracle.com` passam; `docs.oracle.com.evil.com` e `notdocs.oracle.com` não). A comparação é por rótulo, nunca por sufixo de texto. Linguagem que não está na lista não tem fallback: adicionar uma é editar o YAML e, se for nova, o `aliases-publicos.yml`.
 
-Os demais limites também são configuráveis: `max-pages-per-question` (3), `fetch-timeout` (5s, vale para a busca inteira, redirects incluídos), `max-page-bytes` (2MB) e `max-redirects` (3).
+Os demais limites também são configuráveis: `max-pages-per-question` (3), `fetch-timeout` (5s, vale para a busca inteira, redirects incluídos), `max-page-bytes` (2MB) e `max-redirects` (3). O prazo do fallback inteiro, `fallback-timeout` (8s), e a chave `brave-api-key` estão em [Prazos e cota](#prazos-e-cota) e em [configuracao.md](configuracao.md#fallback-web-e-importação).
 
 ## Busca
 
