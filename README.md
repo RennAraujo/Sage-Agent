@@ -110,6 +110,69 @@ porque Collectors.toList() não garante o tipo nem a mutabilidade [1].
 
 A linha "Documentação consultada" é emitida pelo código, antes da primeira frase que cita a fonte, e não pelo modelo. Cada frase termina numa citação que aponta para um trecho que foi de fato enviado ao modelo.
 
+## Precificação aproximada
+
+Os números abaixo são estimativas feitas a partir do tamanho dos prompts que o Sage monta, não medições: nenhuma conta foi conferida contra o Bedrock real. Servem para ter ordem de grandeza. Para o valor de verdade, rode umas 50 perguntas reais e some o `usage` que o Bedrock devolve em cada resposta.
+
+### Preço dos modelos
+
+Tabela da Anthropic, em dólares por milhão de tokens. No Amazon Bedrock a AWS publica o próprio preço, que pode variar um pouco; confira na [página de preços do Bedrock](https://aws.amazon.com/bedrock/pricing/) antes de fechar orçamento.
+
+| Modelo | Entrada | Saída |
+|---|---|---|
+| Claude Haiku 5.5 | US$ 0,10 | US$ 0,50 |
+| Claude Sonnet 5.5 | US$ 2,00 | US$ 10,00 |
+
+O raciocínio interno do modelo (thinking) é cobrado como saída, por isso entra na conta da saída nas estimativas.
+
+### Custo por pergunta
+
+| Caminho | Entrada | Saída | Custo estimado |
+|---|---|---|---|
+| Haiku: consulta comum com até 5 trechos | ~3 mil tokens | ~1 mil tokens | ~US$ 0,0008 |
+| Sonnet: comparação entre versões ou explicação de fluxo | ~5 a 8 mil tokens | ~1,5 a 2 mil tokens | ~US$ 0,02 a 0,04 |
+| Resposta do cache ou "não encontrei" | 0 | 0 | US$ 0 |
+
+A entrada é quase toda feita dos trechos de documentação enviados junto com a pergunta (cada trecho tem até 1500 caracteres). O Sonnet custa mais porque recebe mais contexto e escreve respostas mais longas, versão por versão ou passo a passo.
+
+### Exemplo: equipe de 10 pessoas
+
+Suponha 10 pessoas fazendo 20 perguntas por dia, 22 dias úteis no mês: 4.400 perguntas. Distribuindo como costuma acontecer, 75% vão para o Haiku, 20% para o Sonnet e 5% saem do cache ou terminam em "não encontrei" sem chamar modelo nenhum.
+
+| Caminho | Perguntas | Custo unitário | Total |
+|---|---|---|---|
+| Haiku | 3.300 | US$ 0,0008 | ~US$ 2,60 |
+| Sonnet | 880 | ~US$ 0,03 | ~US$ 26,40 |
+| Cache / sem modelo | 220 | US$ 0 | US$ 0 |
+| **Tokens no mês** | | | **~US$ 30** |
+
+Isso dá uma média de cerca de US$ 0,007 por pergunta, e quase todo o valor vem do Sonnet. Com 100 pessoas no mesmo ritmo, a conta de tokens vai para cerca de US$ 300 por mês.
+
+### Infraestrutura AWS por mês
+
+Preços de us-east-1. Em São Paulo (`sa-east-1`) a mesma configuração fica uns 40 a 50% mais cara.
+
+| Item | Custo mensal | Observação |
+|---|---|---|
+| ECS Fargate, 2 vCPU e 4 GB, ligado 24 horas | ~US$ 70 | os 4 GB são necessários para carregar os três modelos ONNX |
+| NAT Gateway | ~US$ 35 + tráfego | só existe para a saída ao Brave no fallback web |
+| 3 VPC endpoints (S3, KMS, Bedrock) | ~US$ 22 | mantêm o tráfego para a AWS fora da internet |
+| KMS, S3 e logs | poucos dólares | o KMS cobra por requisição, cerca de duas por pergunta |
+| **Total** | **~US$ 130 a 180** | custo fixo, independe do número de perguntas |
+
+O Brave Search só gera custo quando a versão pedida não está no acervo e o Sage vai buscar na web. Ele tem plano gratuito com limite mensal e plano pago por mil consultas; confira os valores atuais no site do Brave.
+
+### Juntando tudo
+
+Para uma equipe pequena, são cerca de US$ 30 de tokens mais US$ 150 de infraestrutura: **uns US$ 180 por mês, perto de R$ 1.000**. Nessa escala quem pesa é a infraestrutura. Conforme o número de pessoas cresce, os tokens passam a dominar a conta.
+
+### Onde dá para economizar
+
+- **Sonnet.** É a maior parte do custo de tokens. Reduzir quantas perguntas viram comparação ou fluxo, ou baixar o `effort` do Sonnet, é a alavanca que mais mexe no valor.
+- **Fargate em horário comercial.** Desligar fora do expediente corta perto de 60% do custo de computação. O preço é esperar o índice carregar de novo a cada subida.
+- **Sem fallback web.** Se o acervo cobre o que a equipe usa, dá para desligar o fallback e eliminar o NAT Gateway.
+- **Cache de prompt da Anthropic.** Ajuda pouco aqui: só o prompt de sistema se repete, e os trechos mudam a cada pergunta.
+
 ## Documentação
 
 Cada arquivo responde a uma pergunta diferente, e a ordem abaixo é uma boa ordem de leitura.
