@@ -139,7 +139,11 @@ class AnswerServiceTest {
 
         verifyNoInteractions(model);
         assertThat(sink.events)
-                .containsExactly("metadata", "text:Não encontrei isso na documentação disponível.", "done");
+                .containsExactly(
+                        "metadata",
+                        "text:Busquei na documentação do Java 21.",
+                        "text:Não encontrei isso na documentação disponível.",
+                        "done");
         assertThat(sink.metadata.get(0).route()).isEqualTo(Route.NOT_DOCUMENTED);
         assertThat(sink.metadata.get(0).model()).isEmpty();
         assertThat(sink.metadata.get(0).conversationId()).isNotBlank().isNotEqualTo("c-1");
@@ -181,6 +185,22 @@ class AnswerServiceTest {
         verify(retriever).retrieve(anyString(), filter.capture());
         assertThat(filter.getValue().versions()).containsExactly("25");
         assertThat(filter.getValue().language()).contains("java");
+    }
+
+    @Test
+    void notDocumentedWithInferredVersionSaysWhichVersionWasSearched() {
+        when(retriever.retrieve(anyString(), any())).thenReturn(List.of());
+
+        service(mock(LanguageModel.class))
+                .answer(new AnswerRequest("como usar toList no java?", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.events)
+                .containsExactly(
+                        "metadata",
+                        "text:Considerei a versão 25, a mais recente disponível.",
+                        "text:Busquei na documentação do Java 25.",
+                        "text:Não encontrei isso na documentação disponível.",
+                        "done");
     }
 
     @Test
@@ -570,7 +590,12 @@ class AnswerServiceTest {
 
         service(model).answer(new AnswerRequest("toList no java 21", Optional.empty(), ACTOR), sink);
 
-        assertThat(sink.events).containsExactly("metadata", "text:A documentação disponível não cobre isso.", "done");
+        assertThat(sink.events)
+                .containsExactly(
+                        "metadata",
+                        "text:Busquei na documentação do Java 21.",
+                        "text:A documentação disponível não cobre isso.",
+                        "done");
     }
 
     @Test

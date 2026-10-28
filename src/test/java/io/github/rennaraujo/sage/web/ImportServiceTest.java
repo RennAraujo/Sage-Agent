@@ -157,6 +157,61 @@ class ImportServiceTest {
         wire.verify(times, getRequestedFor(urlEqualTo(path)));
     }
 
+    /** Serviço em que o host de teste segue as regras de versão do docs.oracle.com. */
+    private ImportService serviceWithOracleRules() {
+        WebProperties web = new WebProperties(
+                Map.of("java", DOMAINS),
+                3,
+                Duration.ofSeconds(2),
+                DataSize.ofKilobytes(256),
+                3,
+                "",
+                URI.create("https://api.search.brave.com/res/v1/web/search"));
+        AllowlistedPageFetcher fetcher =
+                new AllowlistedPageFetcher(web, h -> new InetAddress[] {InetAddress.getLoopbackAddress()}, true);
+        ImportService created = new ImportService(
+                fetcher,
+                new HtmlToMarkdown(),
+                store,
+                new FrontmatterParser(CLOCK),
+                new SecretScanner(),
+                audit::add,
+                new RateLimiter(new RateLimitProperties(20, 1000)),
+                web,
+                new ImportProperties(2, 50, 3, 2, Duration.ofMinutes(1)),
+                CLOCK,
+                true,
+                VersionedUrls.production().withAlias(HOST, "docs.oracle.com"));
+        createdServices.add(created);
+        return created;
+    }
+
+    @Test
+    void rootOfAVersionedDomainMustBeTheRequestedVersion() {
+        page("/javase/21/docs/", "raiz do 21");
+        ImportService service = serviceWithOracleRules();
+
+        assertThatThrownBy(() -> service.start(url("/javase/21/docs/"), "java", "25", 0, ACTOR))
+                .isInstanceOf(InvalidDocumentException.class)
+                .hasMessageNotContaining("javase");
+        assertThat(audit).isEmpty();
+        requested("/javase/21/docs/", 0);
+    }
+
+    @Test
+    void rootOfAVersionedDomainWithTheRequestedVersionImports() {
+        page("/javase/25/docs/", "raiz do 25", "a.html");
+        page("/javase/25/docs/a.html", "pagina a");
+        ImportService service = serviceWithOracleRules();
+
+        ImportJob job = await(
+                service,
+                service.start(url("/javase/25/docs/"), "java", "25", 1, ACTOR).id());
+
+        assertThat(job.status()).isEqualTo(ImportJob.Status.DONE);
+        assertThat(job.imported()).isEqualTo(2);
+    }
+
     @Test
     void importsOnlyWithinRootPrefix() {
         page(
@@ -351,6 +406,24 @@ class ImportServiceTest {
         assertThat(job.status()).isEqualTo(ImportJob.Status.FAILED);
         assertThat(job.imported()).isZero();
         assertThat(store.ids()).isEmpty();
+    }
+
+    @Test
+    void storedPageWhoseListenerFailedIsNotAuditedAsFailed() {
+        page("/docs/guide/", "raiz");
+        store.listenerFailure = true;
+        ImportService service = service(0, 10);
+
+        ImportJob job = await(
+                service,
+                service.start(url("/docs/guide/"), "java", "25", 0, ACTOR).id());
+
+        assertThat(job.status()).isEqualTo(ImportJob.Status.FAILED);
+        assertThat(job.imported()).isEqualTo(1);
+        assertThat(audit.stream().filter(e -> outcome(e, "falhou"))).isEmpty();
+        assertThat(audit.stream().filter(e -> outcome(e, "salvo")))
+                .singleElement()
+                .satisfies(e -> assertThat(e.details()).containsEntry("aviso", "indice"));
     }
 
     @Test
@@ -755,6 +828,7 @@ class ImportServiceTest {
         private final Map<String, Document> documents = new ConcurrentHashMap<>();
 
         volatile Error failure;
+        volatile boolean listenerFailure;
 
         @Override
         public void save(Document doc) {
@@ -766,7 +840,13 @@ class ImportServiceTest {
             if (failure != null) {
                 throw failure;
             }
-            return documents.putIfAbsent(doc.metadata().id().value(), doc) == null;
+            boolean written = documents.putIfAbsent(doc.metadata().id().value(), doc) == null;
+            if (written && listenerFailure) {
+                // Como o armazém de verdade quando o índice lança depois de gravar.
+                throw new io.github.rennaraujo.sage.document.DocumentChangeNotPropagatedException(
+                        new IllegalStateException("índice"));
+            }
+            return written;
         }
 
         @Override

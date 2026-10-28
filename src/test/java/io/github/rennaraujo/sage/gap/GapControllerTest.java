@@ -3,6 +3,7 @@ package io.github.rennaraujo.sage.gap;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -12,8 +13,8 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
@@ -41,8 +42,12 @@ class GapControllerTest {
     private static final String READER_KEY = newKey();
     private static final String EDITOR_KEY = newKey();
 
-    @TempDir
-    static Path storageDir;
+    private static final Path STORAGE_DIR = ScratchDirs.create("sage-teste-");
+
+    @AfterAll
+    static void deleteScratchDirs() {
+        ScratchDirs.delete(STORAGE_DIR);
+    }
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) throws IOException {
@@ -54,7 +59,7 @@ class GapControllerTest {
         registry.add("sage.crypto.provider", () -> "local");
         registry.add("sage.crypto.local-key-file", keyFile::toString);
         registry.add("sage.storage.type", () -> "local");
-        registry.add("sage.storage.local-dir", storageDir::toString);
+        registry.add("sage.storage.local-dir", STORAGE_DIR::toString);
         registry.add("sage.auth.keys[0].name", () -> "leitor-teste");
         registry.add("sage.auth.keys[0].role", () -> "READER");
         registry.add("sage.auth.keys[0].sha256", () -> sha256Hex(READER_KEY));

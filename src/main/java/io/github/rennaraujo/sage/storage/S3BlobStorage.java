@@ -17,24 +17,34 @@ public final class S3BlobStorage implements BlobStorage {
 
     private final S3Client s3;
     private final String bucket;
+    private final Optional<String> kmsKeyId;
 
+    /** Com a chave KMS padrão do bucket. */
     public S3BlobStorage(S3Client s3, String bucket) {
+        this(s3, bucket, Optional.empty());
+    }
+
+    /**
+     * @param kmsKeyId a chave KMS (id, ARN ou alias) que o S3 usa no SSE-KMS de cada objeto; vazio usa a chave padrão
+     *     do bucket
+     */
+    public S3BlobStorage(S3Client s3, String bucket, Optional<String> kmsKeyId) {
         this.s3 = s3;
         this.bucket = bucket;
+        this.kmsKeyId = kmsKeyId.filter(k -> !k.isBlank());
     }
 
     @Override
     public void put(String key, byte[] content) {
         BlobKeys.requireValidKey(key);
-        // Pede SSE-KMS (com a chave padrão do bucket) de forma explícita: assim uma política de bucket que nega
-        // escrita sem esse cabeçalho não bloqueia o Sage, e o conteúdo, que já chega cifrado, ganha a segunda camada.
-        s3.putObject(
-                PutObjectRequest.builder()
-                        .bucket(bucket)
-                        .key(key)
-                        .serverSideEncryption(ServerSideEncryption.AWS_KMS)
-                        .build(),
-                RequestBody.fromBytes(content));
+        // Pede SSE-KMS de forma explícita: assim uma política de bucket que nega escrita sem esse cabeçalho não
+        // bloqueia
+        // o Sage, e o conteúdo, que já chega cifrado, ganha a segunda camada. Com sage.storage.s3-kms-key-id, a chave
+        // é a gerenciada pelo cliente; sem ele, o S3 usa a padrão do bucket (ou a aws/s3).
+        PutObjectRequest.Builder request =
+                PutObjectRequest.builder().bucket(bucket).key(key).serverSideEncryption(ServerSideEncryption.AWS_KMS);
+        kmsKeyId.ifPresent(request::ssekmsKeyId);
+        s3.putObject(request.build(), RequestBody.fromBytes(content));
     }
 
     @Override

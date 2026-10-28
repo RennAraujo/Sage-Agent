@@ -21,7 +21,7 @@ class RetrieverTest {
     private static final int CONTEXT = 5;
     private static final int CANDIDATES = 8;
     private static final int COMPARISON_MAX = 8;
-    /** O limiar de rota da Task 11 (sage.retrieval.min-score). */
+    /** O limiar de rota (sage.retrieval.min-score). */
     private static final double MIN_SCORE = 0.35;
 
     private final RetrievalProperties properties =

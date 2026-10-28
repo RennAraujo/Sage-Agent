@@ -24,7 +24,7 @@ As portas que o resto do código enxerga são `DocumentStore` (acervo), `BlobSto
 
 ## Caminho de um documento
 
-No upload, o `UploadService` grava o documento no `DocumentStore`. O acervo cifra o conteúdo, grava o blob e, ainda dentro do lock daquele id, publica `DocumentSavedEvent`. O `IndexBootstrapper` escuta o evento e chama `SearchIndex.upsert`. Exclusão é o mesmo caminho com `DocumentDeletedEvent` e `remove`.
+No upload, o `UploadService` grava o documento no `DocumentStore`. O acervo cifra o conteúdo, grava o blob e, ainda dentro do lock daquele id, publica `DocumentSavedEvent`. O `IndexBootstrapper` escuta o evento e chama `SearchIndex.upsert`. Exclusão é o mesmo caminho com `DocumentDeletedEvent` e `remove`. Depois de cada um, num `finally`, o acervo publica `DocumentsChangedEvent`, que esvazia o cache de respostas mesmo quando um ouvinte anterior falhou.
 
 Como os listeners rodam de forma síncrona dentro do lock do id, a ordem dos eventos de um documento é a ordem das operações no acervo, e o índice nunca fica com a versão antiga por cima da nova. O preço é que o upload espera a reindexação daquele documento. Para um documento de alguns KB isso são milissegundos; um documento enorme segura o lock do próprio id por mais tempo, mas não bloqueia os outros.
 

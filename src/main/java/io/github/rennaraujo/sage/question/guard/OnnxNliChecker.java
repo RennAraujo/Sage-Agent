@@ -47,7 +47,7 @@ public final class OnnxNliChecker implements GroundednessChecker, AutoCloseable 
 
     /**
      * Como o construtor padrão; {@code copyShortcut = false} desliga o atalho de cópia de frase completa do trecho, só
-     * para medir o quanto ele ajuda (a avaliação da Task 20 faz isso).
+     * para medir o quanto ele ajuda (a avaliação descrita em {@code docs/decisoes.md} faz isso).
      */
     public OnnxNliChecker(NliFiles files, GuardProperties properties, boolean copyShortcut) {
         this.copyShortcut = copyShortcut;

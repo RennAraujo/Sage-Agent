@@ -6,6 +6,7 @@ import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.auth.RateLimitedAction;
 import io.github.rennaraujo.sage.auth.RateLimiter;
 import io.github.rennaraujo.sage.document.Document;
+import io.github.rennaraujo.sage.document.DocumentChangeNotPropagatedException;
 import io.github.rennaraujo.sage.document.DocumentDefaults;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentStore;
@@ -46,12 +47,13 @@ import org.slf4j.LoggerFactory;
  * {@link AllowlistedPageFetcher}, então valem as mesmas travas contra SSRF do fallback web, e o texto sai pelo mesmo
  * {@link HtmlToMarkdown}. Nada é gravado em claro: as páginas só existem em memória até o {@link DocumentStore} cifrar.
  *
- * <p>Cada página vira o documento {@code publico/<linguagem>/<versao>/<slug>.md} com {@code revisado: false},
- * {@code url_origem} e {@code coletado_em}. Página com segredo detectado é ignorada; documento que já existe no acervo
- * também é ignorado, nunca sobrescrito: a gravação usa {@link DocumentStore#saveIfAbsent}, atômica, então nem um
- * segundo job nem um upload concorrente são atropelados. Duas páginas do mesmo job que dão o mesmo slug contam como
- * colisão. A auditoria vem antes de cada gravação e, se falhar, o job para (fail-closed). Só ids e contagens entram
- * no log.
+ * <p>Cada página vira o documento {@code publico/<linguagem>/<versao>/<slug>.md} com {@code revisado: false}, {@code
+ * url_origem} e {@code coletado_em}. Em domínio oficial com estrutura de versão conhecida ({@link VersionedUrls}), a
+ * raiz precisa ser da versão pedida (422 se não for) e cada página passa pela mesma regra. Página com segredo detectado
+ * é ignorada; documento que já existe no acervo também é ignorado, nunca sobrescrito: a gravação usa {@link
+ * DocumentStore#saveIfAbsent}, atômica, então nem um segundo job nem um upload concorrente são atropelados. Duas
+ * páginas do mesmo job que dão o mesmo slug contam como colisão. A auditoria vem antes de cada gravação e, se falhar, o
+ * job para (fail-closed). Só ids e contagens entram no log.
  *
  * <p>Limites de execução: no máximo {@code max-concurrent-jobs} jobs ao mesmo tempo (o seguinte recebe 429), prazo
  * total {@code max-duration} por job, e um registro que nunca descarta job em andamento. Cancelamento (prazo, parada
@@ -62,6 +64,10 @@ final class ImportService {
     /** Mensagem única para qualquer raiz recusada: nunca repete a URL recebida. */
     static final String INVALID_ROOT =
             "A URL raiz precisa ser https, sem usuário e senha, de um domínio permitido para a linguagem informada";
+
+    /** Raiz de domínio oficial cuja estrutura de caminho traz outra versão; também não repete a URL. */
+    static final String ROOT_OF_ANOTHER_VERSION =
+            "A URL raiz não é da versão informada: neste domínio a versão faz parte do caminho e precisa ser a mesma";
 
     private static final Logger LOG = LoggerFactory.getLogger(ImportService.class);
     private static final String HTTPS = "https";
@@ -81,7 +87,6 @@ final class ImportService {
     private static final Pattern NON_SLUG = Pattern.compile("[^a-z0-9]+");
     private static final Pattern EDGE_DASHES = Pattern.compile("^-+|-+$");
     private static final Pattern PAGE_EXTENSION = Pattern.compile("(?i)\\.html?$");
-    private static final Pattern ENCODED_DOT_OR_SLASH = Pattern.compile("(?i)%2e|%2f|%5c");
 
     private final AllowlistedPageFetcher fetcher;
     private final HtmlToMarkdown converter;
@@ -92,6 +97,7 @@ final class ImportService {
     private final RateLimiter rateLimiter;
     private final WebProperties web;
     private final ImportProperties properties;
+    private final VersionedUrls versionedUrls;
     private final Clock clock;
     private final boolean testMode;
     private final Semaphore permits;
@@ -125,6 +131,36 @@ final class ImportService {
             ImportProperties properties,
             Clock clock,
             boolean testMode) {
+        this(
+                fetcher,
+                converter,
+                store,
+                parser,
+                scanner,
+                auditLog,
+                rateLimiter,
+                web,
+                properties,
+                clock,
+                testMode,
+                VersionedUrls.production());
+    }
+
+    /** Construtor dos testes que também aponta um host local para as regras de versão de um domínio oficial. */
+    ImportService(
+            AllowlistedPageFetcher fetcher,
+            HtmlToMarkdown converter,
+            DocumentStore store,
+            FrontmatterParser parser,
+            SecretScanner scanner,
+            AuditLog auditLog,
+            RateLimiter rateLimiter,
+            WebProperties web,
+            ImportProperties properties,
+            Clock clock,
+            boolean testMode,
+            VersionedUrls versionedUrls) {
+        this.versionedUrls = versionedUrls;
         this.fetcher = fetcher;
         this.converter = converter;
         this.store = store;
@@ -150,6 +186,11 @@ final class ImportService {
         String ver = version == null ? "" : version.strip().toLowerCase(Locale.ROOT);
         Set<String> domains = web.domainsFor(lang);
         URI start = normalizeRoot(root, domains);
+        if (versionedUrls.hasRules(start) && !versionedUrls.matches(start, lang, ver)) {
+            // Domínio oficial com estrutura de versão conhecida: a raiz tem de ser da versão pedida, senão cada página
+            // seria gravada com o rótulo de outra versão.
+            throw new InvalidDocumentException(ROOT_OF_ANOTHER_VERSION);
+        }
         if (depth < 0 || depth > properties.maxDepth()) {
             throw new InvalidDocumentException("profundidade deve ficar entre 0 e " + properties.maxDepth());
         }
@@ -272,7 +313,7 @@ final class ImportService {
             return Optional.empty();
         }
         String rawPath = uri.getRawPath() == null ? "" : uri.getRawPath();
-        if (ENCODED_DOT_OR_SLASH.matcher(rawPath).find()) {
+        if (UrlPaths.hasEncodedDotOrSlash(rawPath)) {
             return Optional.empty();
         }
         try {
@@ -393,7 +434,10 @@ final class ImportService {
                 continue;
             }
             FetchedPage page = fetched.get();
-            Optional<URI> finalUrl = canonical(page.url()).filter(scope::contains);
+            Optional<URI> finalUrl = canonical(page.url())
+                    .filter(scope::contains)
+                    // Mesma regra da raiz para cada página: em domínio com estrutura de versão, só a versão pedida.
+                    .filter(u -> !versionedUrls.hasRules(u) || versionedUrls.matches(u, state.language, state.version));
             if (finalUrl.isEmpty() || (!finalUrl.get().equals(current.uri()) && !seen.add(finalUrl.get()))) {
                 state.skipped.incrementAndGet();
                 continue;
@@ -449,7 +493,13 @@ final class ImportService {
             written = store.saveIfAbsent(document);
         } catch (Throwable t) { // NOPMD - o job precisa registrar o "falhou" até para Error
             try {
-                recordUpload(run.actor(), state, document, "falhou");
+                if (t instanceof DocumentChangeNotPropagatedException) {
+                    // Gravado; quem falhou foi um ouvinte (o índice). Conta como importada e o desfecho diz isso.
+                    state.imported.incrementAndGet();
+                    recordUpload(run.actor(), state, document, "salvo", Optional.of("indice"));
+                } else {
+                    recordUpload(run.actor(), state, document, "falhou", Optional.empty());
+                }
             } catch (RuntimeException auditFailure) {
                 t.addSuppressed(auditFailure);
             }
@@ -467,12 +517,18 @@ final class ImportService {
     }
 
     private void recordUpload(String actor, JobState state, Document document, String result) {
+        recordUpload(actor, state, document, result, Optional.empty());
+    }
+
+    private void recordUpload(
+            String actor, JobState state, Document document, String result, Optional<String> warning) {
         Map<String, String> details = new LinkedHashMap<>();
         details.put("document", document.metadata().id().value());
         details.put("bytes", Integer.toString(document.body().getBytes(StandardCharsets.UTF_8).length));
         details.put("job", state.id);
         details.put("origem", "importacao");
         details.put("resultado", result);
+        warning.ifPresent(w -> details.put("aviso", w));
         audit(AuditEventType.DOCUMENT_UPLOADED, actor, details);
     }
 

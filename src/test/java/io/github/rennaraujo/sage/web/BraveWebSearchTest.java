@@ -56,6 +56,15 @@ class BraveWebSearchTest {
     }
 
     @Test
+    void closeShutsTheHttpClientDown() {
+        BraveWebSearch search = search("chave");
+
+        search.close();
+
+        assertThat(search.closed()).isTrue();
+    }
+
+    @Test
     void ignoresNonAllowlistedResults() {
         wire.stubFor(get(urlPathEqualTo("/res/v1/web/search"))
                 .willReturn(aResponse()

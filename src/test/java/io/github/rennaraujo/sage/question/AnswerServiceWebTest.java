@@ -23,8 +23,8 @@ import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.Document;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentMetadata;
-import io.github.rennaraujo.sage.document.DocumentSavedEvent;
 import io.github.rennaraujo.sage.document.DocumentStore;
+import io.github.rennaraujo.sage.document.DocumentsChangedEvent;
 import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.gap.GapRegistry;
 import io.github.rennaraujo.sage.question.AnswerServiceTest.RecordingSink;
@@ -190,7 +190,7 @@ class AnswerServiceWebTest {
             boolean written = docs.putIfAbsent(doc.metadata().id(), doc) == null;
             if (written) {
                 // Como o armazém de verdade: o evento de gravação esvazia o cache de respostas.
-                cache.onSaved(new DocumentSavedEvent(doc));
+                cache.onChanged(new DocumentsChangedEvent());
             }
             return written;
         }
@@ -528,7 +528,12 @@ class AnswerServiceWebTest {
         ask(service(model), "como configurar o spring security 6.3?", sink);
 
         verifyNoInteractions(model);
-        assertThat(sink.events).containsExactly("metadata", "text:" + AnswerService.NO_CONTEXT, "done");
+        assertThat(sink.events)
+                .containsExactly(
+                        "metadata",
+                        "text:Busquei na documentação do Spring Security 6.3.",
+                        "text:" + AnswerService.NO_CONTEXT,
+                        "done");
         assertThat(searches).hasValue(0);
     }
 

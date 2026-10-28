@@ -2,7 +2,9 @@ package io.github.rennaraujo.sage.question.guard;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.rennaraujo.sage.upload.SecretScanner;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -166,7 +168,7 @@ class AnswerGuardTest {
 
     @Test
     void absenceClaimOutsideTemplateIsDropped() {
-        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+        AnswerGuard guard = comparisonOver("Java 8");
 
         List<String> out = run(
                 guard,
@@ -183,7 +185,7 @@ class AnswerGuardTest {
 
     @Test
     void citedDocumentedEventsPassButNonExistenceIsDropped() {
-        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+        AnswerGuard guard = comparisonOver("Java 8");
 
         List<String> out = run(
                 guard,
@@ -204,7 +206,7 @@ class AnswerGuardTest {
 
     @Test
     void behaviouralNegativesPassEvenInComparisons() {
-        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+        AnswerGuard guard = comparisonOver("Java 8");
 
         List<String> out = run(
                 guard,
@@ -233,7 +235,7 @@ class AnswerGuardTest {
 
     @Test
     void absenceTemplateStillNeedsCitation() {
-        AnswerGuard guard = new AnswerGuard(CONTEXT, true);
+        AnswerGuard guard = comparisonOver("Java 8");
 
         List<String> out = run(guard, "A documentação do Java 8 disponível não menciona records. Use records [1].");
 
@@ -406,6 +408,60 @@ class AnswerGuardTest {
 
         assertThat(run(guard, "1. Receba o pedido [1].\n" + block + "\n"))
                 .containsExactly("1. Receba o pedido [1].", block);
+    }
+
+    @Test
+    void absenceTemplateNamingAnotherVersionThanTheCitedChunkIsDropped() {
+        AnswerGuard guard = comparisonOver("Java 8");
+
+        List<String> out = run(
+                guard,
+                "A documentação do Java 25 disponível não menciona records [1]. "
+                        + "A documentação do Java 8 disponível não menciona records [2].");
+
+        assertThat(out).containsExactly("A documentação do Java 8 disponível não menciona records [2].");
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void absenceTemplateMustNameTheVersionOfEveryCitedChunk() {
+        AnswerGuard guard = new AnswerGuard(
+                Collections.nCopies(2, ""),
+                List.of("Java 8", "Java 25"),
+                true,
+                false,
+                new PassThroughGroundednessChecker(),
+                new SecretScanner());
+
+        List<String> out = run(guard, "A documentação do Java 8 disponível não menciona records [1][2].");
+
+        assertThat(out).containsExactly(FALLBACK);
+        assertThat(guard.dropped()).isEqualTo(1);
+    }
+
+    @Test
+    void absenceTemplateCitingAnInternalOrUnversionedChunkIsDropped() {
+        AnswerGuard guard = new AnswerGuard(
+                Collections.nCopies(1, ""),
+                List.of(""),
+                true,
+                false,
+                new PassThroughGroundednessChecker(),
+                new SecretScanner());
+
+        assertThat(run(guard, "A documentação do Java 8 disponível não menciona records [1]."))
+                .containsExactly(FALLBACK);
+    }
+
+    /** Guard de comparação em que todos os trechos são da mesma linguagem e versão. */
+    private static AnswerGuard comparisonOver(String source) {
+        return new AnswerGuard(
+                Collections.nCopies(CONTEXT, ""),
+                Collections.nCopies(CONTEXT, source),
+                true,
+                false,
+                new PassThroughGroundednessChecker(),
+                new SecretScanner());
     }
 
     private static List<String> run(AnswerGuard guard, String text) {

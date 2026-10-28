@@ -14,10 +14,8 @@ import io.github.rennaraujo.sage.audit.AuditEvent;
 import io.github.rennaraujo.sage.audit.AuditEventType;
 import io.github.rennaraujo.sage.audit.AuditException;
 import io.github.rennaraujo.sage.audit.AuditLog;
-import io.github.rennaraujo.sage.document.Document;
-import io.github.rennaraujo.sage.document.DocumentDeletedEvent;
 import io.github.rennaraujo.sage.document.DocumentId;
-import io.github.rennaraujo.sage.document.DocumentSavedEvent;
+import io.github.rennaraujo.sage.document.DocumentsChangedEvent;
 import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.question.AnswerServiceTest.RecordingSink;
 import io.github.rennaraujo.sage.question.llm.FakeLanguageModel;
@@ -127,7 +125,7 @@ class AnswerServiceCacheTest {
     @Test
     void cacheClearedOnDocumentSaved() {
         ask(QUESTION, Optional.empty(), new RecordingSink());
-        cache.onSaved(new DocumentSavedEvent(mock(Document.class)));
+        cache.onChanged(new DocumentsChangedEvent());
         ask(QUESTION, Optional.empty(), new RecordingSink());
 
         assertThat(model.tiers()).hasSize(2);
@@ -136,7 +134,7 @@ class AnswerServiceCacheTest {
     @Test
     void cacheClearedOnDocumentDeleted() {
         ask(QUESTION, Optional.empty(), new RecordingSink());
-        cache.onDeleted(new DocumentDeletedEvent(DocumentId.of("publico/java/21/streams.md")));
+        cache.onChanged(new DocumentsChangedEvent());
         ask(QUESTION, Optional.empty(), new RecordingSink());
 
         assertThat(model.tiers()).hasSize(2);
@@ -252,7 +250,7 @@ class AnswerServiceCacheTest {
     @Test
     void answerWhoseRetrievalStartedBeforeAnEventIsNotCached() {
         LanguageModel racing = (tier, prompt) -> {
-            cache.onSaved(new DocumentSavedEvent(mock(Document.class)));
+            cache.onChanged(new DocumentsChangedEvent());
             return Flux.just(new io.github.rennaraujo.sage.question.llm.ModelEvent.TextDelta("Use toList() [1]."));
         };
         service(racing).answer(new AnswerRequest(QUESTION, Optional.empty(), ACTOR), new RecordingSink());

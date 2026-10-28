@@ -4,7 +4,7 @@ Toda propriedade `sage.*` é lida por um record `@ConfigurationProperties` valid
 
 ## Como configurar
 
-Os valores vêm, em ordem crescente de prioridade, do `application.yml` embutido no jar, de um `application.yml` ao lado do jar ou em `config/`, e de variáveis de ambiente. Qualquer propriedade vira variável de ambiente trocando `.` e `-` por `_` e pondo em maiúsculas: `sage.rate-limit.questions-per-minute` é `SAGE_RATE_LIMIT_QUESTIONS_PER_MINUTE`. Cinco têm um nome curto já ligado no `application.yml` (`SAGE_KMS_KEY_ID`, `SAGE_S3_BUCKET`, `SAGE_MODEL_FAST_ID`, `SAGE_MODEL_STRONG_ID`, `SAGE_BRAVE_API_KEY`), e as chaves de API usam o índice da lista (`SAGE_AUTH_KEYS_0_NAME`, `SAGE_AUTH_KEYS_0_ROLE`, `SAGE_AUTH_KEYS_0_SHA256`, depois `_1_`...). Durações aceitam `500ms`, `50s`, `20s`, `6h`, `30m`; tamanhos aceitam `10MB`, `2MB`.
+Os valores vêm, em ordem crescente de prioridade, do `application.yml` embutido no jar, de um `application.yml` ao lado do jar ou em `config/`, e de variáveis de ambiente. Qualquer propriedade vira variável de ambiente trocando `.` e `-` por `_` e pondo em maiúsculas: `sage.rate-limit.questions-per-minute` é `SAGE_RATE_LIMIT_QUESTIONS_PER_MINUTE`. Seis têm um nome curto já ligado no `application.yml` (`SAGE_KMS_KEY_ID`, `SAGE_S3_BUCKET`, `SAGE_S3_KMS_KEY_ID`, `SAGE_MODEL_FAST_ID`, `SAGE_MODEL_STRONG_ID`, `SAGE_BRAVE_API_KEY`), e as chaves de API usam o índice da lista (`SAGE_AUTH_KEYS_0_NAME`, `SAGE_AUTH_KEYS_0_ROLE`, `SAGE_AUTH_KEYS_0_SHA256`, depois `_1_`...). Durações aceitam `500ms`, `50s`, `20s`, `6h`, `30m`; tamanhos aceitam `10MB`, `2MB`.
 
 Há uma armadilha nos valores calibrados. Três propriedades têm no `application.yml` um valor diferente do padrão do record Java: `sage.retrieval.candidates` (8 no yml, 12 no record), `sage.retrieval.min-score` (0.10 contra 0.35) e `sage.rerank.max-tokens` (128 contra 256). Com o `application.yml` do repositório valem os da tabela abaixo. Quem substituir o arquivo inteiro (por exemplo com `--spring.config.location`) e não repetir essas chaves volta aos padrões do record, que são os do começo do projeto, antes da calibração.
 
@@ -31,7 +31,8 @@ Detalhes de formato e de operação em [seguranca.md](seguranca.md#criptografia-
 | `sage.crypto.kms-key-id` | `SAGE_KMS_KEY_ID` | vazio | Id, ARN ou alias da chave KMS. Obrigatório com `provider=kms`. Na subida o Sage chama `kms:DescribeKey` nela e falha se não conseguir, em vez de descobrir no primeiro upload. |
 | `sage.storage.type` | `SAGE_STORAGE_TYPE` | `local` | `local`: blobs cifrados em arquivos sob `local-dir`. `s3`: bucket em `s3-bucket`. Trocar não migra o acervo. |
 | `sage.storage.local-dir` | `SAGE_STORAGE_LOCAL_DIR` | `data` | Diretório dos blobs com `type=local`. No Docker é `/app/data`, montado de `./data`; no Linux o diretório precisa ser gravável pelo uid 10001. |
-| `sage.storage.s3-bucket` | `SAGE_S3_BUCKET` | vazio | Nome do bucket com `type=s3`; obrigatório nesse caso. O bucket precisa existir. Cada escrita pede SSE-KMS (chave padrão do bucket). Região e credenciais vêm da cadeia padrão da AWS. |
+| `sage.storage.s3-bucket` | `SAGE_S3_BUCKET` | vazio | Nome do bucket com `type=s3`; obrigatório nesse caso. O bucket precisa existir. Cada escrita pede SSE-KMS. Região e credenciais vêm da cadeia padrão da AWS. |
+| `sage.storage.s3-kms-key-id` | `SAGE_S3_KMS_KEY_ID` | vazio | Id, ARN ou alias da chave KMS que o S3 usa no SSE-KMS de cada objeto (vai como `SSEKMSKeyId` no `PutObject`). Vazio deixa a escolha com a criptografia padrão do bucket. Em produção, aponte para a chave gerenciada pelo cliente e confira com `aws s3api head-object` (detalhes em [deploy-aws.md](deploy-aws.md#bucket-s3)). A role precisa de `kms:GenerateDataKey` e `kms:Decrypt` nessa chave. |
 
 ## Upload
 

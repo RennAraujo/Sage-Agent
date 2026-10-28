@@ -1,6 +1,7 @@
 package io.github.rennaraujo.sage.web;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.anyRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.anyUrl;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
@@ -15,6 +16,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
@@ -23,6 +25,7 @@ import io.github.rennaraujo.sage.audit.AuditEventType;
 import io.github.rennaraujo.sage.audit.AuditException;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.Document;
+import io.github.rennaraujo.sage.document.DocumentChangeNotPropagatedException;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentMetadata;
 import io.github.rennaraujo.sage.document.DocumentStore;
@@ -233,6 +236,35 @@ class WebFallbackServiceTest {
     }
 
     @Test
+    void storedPageWhoseListenerFailedIsAuditedAsSavedWithAWarning() {
+        MemoryStore listenerFails = new MemoryStore() {
+            @Override
+            public boolean saveIfAbsent(Document doc) {
+                super.saveIfAbsent(doc);
+                // Como o armazém de verdade quando o índice lança depois de gravar.
+                throw new DocumentChangeNotPropagatedException(new IllegalStateException("índice"));
+            }
+        };
+        WebFallbackService service = WebTestSupport.fallback(
+                search(List.of(page("/javase/21/a.html"))),
+                props(3, Duration.ofSeconds(4)),
+                new AliasCatalog(new MemoryStore()),
+                listenerFails,
+                audit,
+                CLOCK);
+
+        service.fetchAndStore("pergunta java 21", analysis(), "21", ACTOR);
+
+        ArgumentCaptor<AuditEvent> captor = forClass(AuditEvent.class);
+        verify(audit, atLeastOnce()).record(captor.capture());
+        List<AuditEvent> uploads = captor.getAllValues().stream()
+                .filter(e -> e.type() == AuditEventType.DOCUMENT_UPLOADED)
+                .toList();
+        assertThat(uploads).extracting(e -> e.details().get("resultado")).containsExactly("tentativa", "salvo");
+        assertThat(uploads.get(1).details()).containsEntry("aviso", "indice");
+    }
+
+    @Test
     void recordsAFailedOutcomeWhenTheSaveThrows() {
         MemoryStore broken = new MemoryStore() {
             @Override
@@ -408,6 +440,49 @@ class WebFallbackServiceTest {
                 .fetchAndStore("alfa bravo charlie delta echo foxtrot golf hotel no java 21", analysis(), "21", ACTOR);
 
         assertThat(searches).hasValue(0);
+    }
+
+    @Test
+    void secretsThatTheQueryTokenizerWouldSplitStillStopTheSearch() {
+        List<String> questions = List.of(
+                "minha senha=abcdefgh123 no java 21",
+                "o token xoxb-123456789012-abcdefghijkl no java 21",
+                "o jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhLWItYyJ9.abc-def_ghi-jkl no java 21");
+        for (String question : questions) {
+            List<Document> saved = service(search(List.of(page("/javase/21/a.html"))))
+                    .fetchAndStore(question, analysis(), "21", ACTOR);
+
+            assertThat(saved).isEmpty();
+        }
+        assertThat(searches).hasValue(0);
+        assertThat(queries).isEmpty();
+        verifyNoInteractions(audit);
+        wire.verify(0, anyRequestedFor(anyUrl()));
+    }
+
+    @Test
+    void doesNotSearchWhenTheQueryWouldCarryASecret() {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(WebFallbackService.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> logs =
+                new ch.qos.logback.core.read.ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        String secret = "AKIA" + "IOSFODNN7EXAMPLE";
+        try {
+            List<Document> saved = service(search(List.of(page("/javase/21/a.html"))))
+                    .fetchAndStore("como usar a chave " + secret + " no java 21", analysis(), "21", ACTOR);
+
+            assertThat(saved).isEmpty();
+        } finally {
+            logger.detachAppender(logs);
+        }
+        assertThat(searches).hasValue(0);
+        verifyNoInteractions(audit);
+        assertThat(logs.list)
+                .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+                .contains("Fallback web não executado: a pergunta carrega um possível segredo")
+                .noneMatch(m -> m.contains(secret));
     }
 
     @Test

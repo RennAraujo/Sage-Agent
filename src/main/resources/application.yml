@@ -39,6 +39,8 @@ sage:
     type: local
     local-dir: data
     s3-bucket: ${SAGE_S3_BUCKET:}
+    # Chave KMS (id, ARN ou alias) do SSE-KMS de cada objeto; vazio usa a chave padrão do bucket.
+    s3-kms-key-id: ${SAGE_S3_KMS_KEY_ID:}
   auth:
     # Chaves de API: lista de { name, role (READER|EDITOR), sha256 }. Só o hash fica aqui; gere com scripts/new-api-key.
     # Exemplo via ambiente: SAGE_AUTH_KEYS_0_NAME=ana SAGE_AUTH_KEYS_0_ROLE=EDITOR SAGE_AUTH_KEYS_0_SHA256=<hash>

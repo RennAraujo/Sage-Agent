@@ -22,6 +22,7 @@ import io.github.rennaraujo.sage.search.Chunk;
 import io.github.rennaraujo.sage.search.IndexReadiness;
 import io.github.rennaraujo.sage.search.Retriever;
 import io.github.rennaraujo.sage.search.ScoredChunk;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -33,9 +34,9 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
@@ -62,8 +63,12 @@ class QuestionControllerTest {
     private static final String READER_KEY = "sage_" + HexFormat.of().formatHex(randomBytes(20));
     private static final String CANARY = "PERGUNTA-CANARIO-42";
 
-    @TempDir
-    static Path storageDir;
+    private static final Path STORAGE_DIR = ScratchDirs.create("sage-teste-");
+
+    @AfterAll
+    static void deleteScratchDirs() {
+        ScratchDirs.delete(STORAGE_DIR);
+    }
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) throws IOException {
@@ -73,7 +78,7 @@ class QuestionControllerTest {
         registry.add("sage.crypto.provider", () -> "local");
         registry.add("sage.crypto.local-key-file", keyFile::toString);
         registry.add("sage.storage.type", () -> "local");
-        registry.add("sage.storage.local-dir", storageDir::toString);
+        registry.add("sage.storage.local-dir", STORAGE_DIR::toString);
         registry.add("sage.auth.keys[0].name", () -> "leitor-teste");
         registry.add("sage.auth.keys[0].role", () -> "READER");
         registry.add("sage.auth.keys[0].sha256", () -> sha256Hex(READER_KEY));

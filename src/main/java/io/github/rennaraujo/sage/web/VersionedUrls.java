@@ -57,13 +57,24 @@ public final class VersionedUrls {
         return new VersionedUrls(copy);
     }
 
+    /** O host da URL tem estrutura de versão conhecida (é um dos domínios oficiais com regra). */
+    boolean hasRules(URI url) {
+        String host = url.getHost() == null ? "" : url.getHost().toLowerCase(Locale.ROOT);
+        return rulesOfHost.containsKey(host);
+    }
+
     boolean matches(URI raw, String language, String version) {
+        // Ponto ou barra codificados não são resolvidos pelo normalize(), mas o servidor pode resolvê-los:
+        // /javase/21/%2e%2e/25/x seria servida como página do 25.
+        if (UrlPaths.hasEncodedDotOrSlash(raw.getRawPath())) {
+            return false;
+        }
         // Segmentos "." e ".." são resolvidos antes: /javase/21/../25/x é uma página do 25.
         URI url = raw.normalize();
         String host = url.getHost() == null ? "" : url.getHost().toLowerCase(Locale.ROOT);
         String rules = rulesOfHost.get(host);
         String path = url.getPath() == null ? "" : url.getPath();
-        if (rules == null) {
+        if (rules == null || UrlPaths.hasDotSegment(path)) {
             return false;
         }
         return switch (rules) {

@@ -24,7 +24,6 @@ import io.github.rennaraujo.sage.question.guard.GroundednessChecker;
 import io.github.rennaraujo.sage.question.guard.GuardProperties;
 import io.github.rennaraujo.sage.question.guard.NliFiles;
 import io.github.rennaraujo.sage.question.guard.OnnxNliChecker;
-import io.github.rennaraujo.sage.question.guard.PassThroughGroundednessChecker;
 import io.github.rennaraujo.sage.question.llm.LanguageModel;
 import io.github.rennaraujo.sage.question.llm.ModelProperties;
 import io.github.rennaraujo.sage.question.llm.PromptBuilder;
@@ -204,8 +203,7 @@ public final class EvalStack {
 
     /** Só citações e segredos, determinístico; o NLI real entra nos testes que o pedem. */
     public static AnswerGuardFactory citationsOnly() {
-        return new AnswerGuardFactory(
-                new PassThroughGroundednessChecker(), new SecretScanner(), new GuardProperties(0.5, 256, false));
+        return AnswerGuardFactory.citationsOnly();
     }
 
     public AnswerGuardFactory withChecker(GroundednessChecker checker) {

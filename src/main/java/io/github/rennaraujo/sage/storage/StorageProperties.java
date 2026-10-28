@@ -12,7 +12,8 @@ import org.springframework.validation.annotation.Validated;
 public record StorageProperties(
         @NotNull @DefaultValue("local") Type type,
         @NotNull @DefaultValue("data") Path localDir,
-        @DefaultValue("") String s3Bucket) {
+        @DefaultValue("") String s3Bucket,
+        @DefaultValue("") String s3KmsKeyId) {
 
     public enum Type {
         LOCAL,

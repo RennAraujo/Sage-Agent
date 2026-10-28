@@ -112,7 +112,7 @@ class RouteDeciderTest {
         assertThat(decider.decide(comparison("21", "8"), List.of(scored(0.9)))).isEqualTo(Route.STRONG_MODEL);
         assertThat(decider.decide(comparison("7", "8"), List.of(scored(0.9)))).isEqualTo(Route.NOT_DOCUMENTED);
         assertThat(RouteDecider.perVersion(comparison("21", "8"))).isTrue();
-        assertThat(RouteDecider.perVersion(comparison("21"))).isFalse();
+        assertThat(RouteDecider.perVersion(comparison("21"))).isTrue();
     }
 
     @Test

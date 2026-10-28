@@ -19,6 +19,28 @@ class AnswerGuardGroundingTest {
         return new AnswerGuard(EVIDENCE, false, false, checker, new SecretScanner());
     }
 
+    /** Guard de comparação em que todos os trechos são da mesma linguagem e versão. */
+    private static AnswerGuard comparison(GroundednessChecker checker, String source) {
+        return new AnswerGuard(
+                EVIDENCE,
+                java.util.Collections.nCopies(EVIDENCE.size(), source),
+                true,
+                false,
+                checker,
+                new SecretScanner());
+    }
+
+    @Test
+    void absenceTemplateNamingAnotherVersionIsDroppedWithoutReachingTheChecker() {
+        FakeGroundednessChecker checker = FakeGroundednessChecker.alwaysSupported();
+        AnswerGuard guard = comparison(checker, "Java 8");
+
+        List<String> out = run(guard, "A documentação do Java 25 disponível não menciona records, mas isso muda [1].");
+
+        assertThat(out).containsExactly(PromptBuilder.NOT_COVERED);
+        assertThat(checker.calls()).isEmpty();
+    }
+
     @Test
     void unsupportedSentenceDropped() {
         AnswerGuard guard = guard(FakeGroundednessChecker.supportingSentencesWith("imutável"));
@@ -115,7 +137,7 @@ class AnswerGuardGroundingTest {
     @Test
     void absenceTemplateSentenceInComparisonIsNotChecked() {
         FakeGroundednessChecker checker = FakeGroundednessChecker.neverSupported();
-        AnswerGuard guard = new AnswerGuard(EVIDENCE, true, false, checker, new SecretScanner());
+        AnswerGuard guard = comparison(checker, "Java 8");
 
         List<String> out = run(guard, "A documentação do Java 8 disponível não menciona records [1].");
 
@@ -126,7 +148,7 @@ class AnswerGuardGroundingTest {
     @Test
     void absenceTemplateWithASecondClauseStillGoesThroughTheChecker() {
         FakeGroundednessChecker checker = FakeGroundednessChecker.neverSupported();
-        AnswerGuard guard = new AnswerGuard(EVIDENCE, true, false, checker, new SecretScanner());
+        AnswerGuard guard = comparison(checker, "Java 21");
 
         List<String> out =
                 run(guard, "A documentação do Java 21 disponível não menciona records, mas records são mutáveis [1].");
@@ -141,10 +163,10 @@ class AnswerGuardGroundingTest {
         FakeGroundednessChecker checker = FakeGroundednessChecker.neverSupported();
 
         run(
-                new AnswerGuard(EVIDENCE, true, false, checker, new SecretScanner()),
+                comparison(checker, "Java 8"),
                 "A documentação do Java 8 disponível não menciona records; eles são mutáveis [1].");
         run(
-                new AnswerGuard(EVIDENCE, true, false, checker, new SecretScanner()),
+                comparison(checker, "Java 8"),
                 "A documentação do Java 8 disponível não menciona " + "uma coisa muito comprida ".repeat(5) + "[1].");
 
         assertThat(checker.calls()).hasSize(2);
@@ -153,7 +175,7 @@ class AnswerGuardGroundingTest {
     @Test
     void absenceTemplateWithAShortCommaSubjectStillSkipsTheChecker() {
         FakeGroundednessChecker checker = FakeGroundednessChecker.neverSupported();
-        AnswerGuard guard = new AnswerGuard(EVIDENCE, true, false, checker, new SecretScanner());
+        AnswerGuard guard = comparison(checker, "Java 8");
 
         List<String> out = run(guard, "A documentação do Java 8 disponível não menciona records, enums [1].");
 

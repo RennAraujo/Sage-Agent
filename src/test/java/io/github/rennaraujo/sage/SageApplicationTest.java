@@ -5,14 +5,15 @@ import static org.awaitility.Awaitility.await;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
 import io.github.rennaraujo.sage.search.IndexReadiness;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.Base64;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
@@ -40,13 +41,17 @@ class SageApplicationTest {
         registry.add("sage.crypto.local-key-file", file::toString);
     }
 
-    @TempDir
-    static Path storageDir;
+    private static final Path STORAGE_DIR = ScratchDirs.create("sage-teste-");
+
+    @AfterAll
+    static void deleteScratchDirs() {
+        ScratchDirs.delete(STORAGE_DIR);
+    }
 
     @DynamicPropertySource
     static void localStorage(DynamicPropertyRegistry registry) {
         registry.add("sage.storage.type", () -> "local");
-        registry.add("sage.storage.local-dir", storageDir::toString);
+        registry.add("sage.storage.local-dir", STORAGE_DIR::toString);
     }
 
     /**

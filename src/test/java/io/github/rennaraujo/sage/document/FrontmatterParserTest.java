@@ -55,7 +55,7 @@ class FrontmatterParserTest {
 
     @Test
     void keepsVersionTextAsWritten() {
-        String raw = PUBLIC_DOC.replace("versao: 25", "versao: 3.20");
+        String raw = PUBLIC_DOC.replace("versao: 25", "versao: 3.20").replace("java/25/", "java/3.20/");
 
         assertThat(parser.parse(raw, DocumentDefaults.empty()).metadata().version())
                 .contains("3.20");
@@ -135,6 +135,39 @@ class FrontmatterParserTest {
         assertThatThrownBy(() -> parser.parse(raw, DocumentDefaults.empty()))
                 .isInstanceOf(InvalidDocumentException.class)
                 .hasMessageContaining("fonte");
+    }
+
+    @Test
+    void publicIdMustCarryTheSameLanguageAndVersionAsTheMetadata() {
+        String otherVersion = PUBLIC_DOC.replace("versao: 25", "versao: 21");
+        String otherLanguage = PUBLIC_DOC.replace("linguagem: java", "linguagem: kotlin");
+
+        assertThatThrownBy(() -> parser.parse(otherVersion, DocumentDefaults.empty()))
+                .isInstanceOf(InvalidDocumentException.class)
+                .hasMessage("Campo versao contradiz o id")
+                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("21", "25", "stream-api"));
+        assertThatThrownBy(() -> parser.parse(otherLanguage, DocumentDefaults.empty()))
+                .isInstanceOf(InvalidDocumentException.class)
+                .hasMessage("Campo linguagem contradiz o id");
+    }
+
+    @Test
+    void publicIdComparisonIgnoresCase() {
+        String raw = PUBLIC_DOC.replace("linguagem: java", "linguagem: Java");
+
+        assertThat(parser.parse(raw, DocumentDefaults.empty()).metadata().language())
+                .isEqualTo("Java");
+    }
+
+    @Test
+    void publicVersionFromDefaultsIsCheckedToo() {
+        String raw = "---\nid: publico/java/25/a.md\nurl_origem: https://example.com/a\n---\ncorpo";
+        DocumentDefaults defaults = new DocumentDefaults(
+                Optional.of(Source.PUBLIC), Optional.of("java"), Optional.of("21"), Optional.of("Geral"), true);
+
+        assertThatThrownBy(() -> parser.parse(raw, defaults))
+                .isInstanceOf(InvalidDocumentException.class)
+                .hasMessage("Campo versao contradiz o id");
     }
 
     @Test

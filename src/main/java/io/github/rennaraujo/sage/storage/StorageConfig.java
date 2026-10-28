@@ -1,5 +1,6 @@
 package io.github.rennaraujo.sage.storage;
 
+import java.util.Optional;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -25,6 +26,6 @@ class StorageConfig {
     @Bean
     @ConditionalOnProperty(prefix = "sage.storage", name = "type", havingValue = "s3")
     BlobStorage s3BlobStorage(S3Client s3Client, StorageProperties properties) {
-        return new S3BlobStorage(s3Client, properties.s3Bucket());
+        return new S3BlobStorage(s3Client, properties.s3Bucket(), Optional.ofNullable(properties.s3KmsKeyId()));
     }
 }

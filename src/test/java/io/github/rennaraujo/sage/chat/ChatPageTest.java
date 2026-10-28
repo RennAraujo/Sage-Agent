@@ -3,6 +3,7 @@ package io.github.rennaraujo.sage.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.boot.test.context.SpringBootTest.WebEnvironment.RANDOM_PORT;
 
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -11,8 +12,8 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.regex.Pattern;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
@@ -32,8 +33,12 @@ class ChatPageTest {
             + "connect-src 'self'; frame-ancestors 'none'";
     private static final Pattern INLINE_HANDLER = Pattern.compile("\son[a-z]+\s*=", Pattern.CASE_INSENSITIVE);
 
-    @TempDir
-    static Path storageDir;
+    private static final Path STORAGE_DIR = ScratchDirs.create("sage-teste-");
+
+    @AfterAll
+    static void deleteScratchDirs() {
+        ScratchDirs.delete(STORAGE_DIR);
+    }
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) throws IOException {
@@ -45,7 +50,7 @@ class ChatPageTest {
         registry.add("sage.crypto.provider", () -> "local");
         registry.add("sage.crypto.local-key-file", keyFile::toString);
         registry.add("sage.storage.type", () -> "local");
-        registry.add("sage.storage.local-dir", storageDir::toString);
+        registry.add("sage.storage.local-dir", STORAGE_DIR::toString);
     }
 
     @Autowired

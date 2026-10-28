@@ -19,6 +19,7 @@ import io.github.rennaraujo.sage.auth.RateLimiter;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentStore;
 import io.github.rennaraujo.sage.document.FrontmatterParser;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import io.github.rennaraujo.sage.upload.SecretScanner;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -37,7 +38,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -72,8 +72,12 @@ class ImportControllerTest {
 
     private static WireMockServer wire;
 
-    @TempDir
-    static Path storageDir;
+    private static final Path STORAGE_DIR = ScratchDirs.create("sage-teste-");
+
+    @AfterAll
+    static void deleteScratchDirs() {
+        ScratchDirs.delete(STORAGE_DIR);
+    }
 
     @BeforeAll
     static void startWire() {
@@ -96,7 +100,7 @@ class ImportControllerTest {
         registry.add("sage.crypto.provider", () -> "local");
         registry.add("sage.crypto.local-key-file", keyFile::toString);
         registry.add("sage.storage.type", () -> "local");
-        registry.add("sage.storage.local-dir", storageDir::toString);
+        registry.add("sage.storage.local-dir", STORAGE_DIR::toString);
         registry.add("sage.auth.keys[0].name", () -> "leitor-teste");
         registry.add("sage.auth.keys[0].role", () -> "READER");
         registry.add("sage.auth.keys[0].sha256", () -> sha256Hex(READER_KEY));

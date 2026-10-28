@@ -6,6 +6,7 @@ import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.auth.RateLimitedAction;
 import io.github.rennaraujo.sage.auth.RateLimiter;
 import io.github.rennaraujo.sage.document.Document;
+import io.github.rennaraujo.sage.document.DocumentChangeNotPropagatedException;
 import io.github.rennaraujo.sage.document.DocumentDefaults;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentMetadata;
@@ -31,6 +32,11 @@ import java.util.regex.Pattern;
  * do documento (id e metadados) e só então a gravação. Num zip, todas as entradas são validadas antes de gravar a
  * primeira: ou entra tudo, ou nada (a gravação em si, uma a uma, não é transacional). Cada gravação, revisão ou
  * remoção gera um evento de auditoria com o id do documento (a auditoria é cifrada) e nunca com o conteúdo.
+ *
+ * <p>O upload segue a mesma convenção da importação e do fallback web: {@code DOCUMENT_UPLOADED} com
+ * {@code resultado=tentativa} para cada documento antes da primeira gravação (se falhar, nada é gravado) e, depois de
+ * cada gravação, {@code salvo}, {@code existente} (outro envio gravou o mesmo id antes, e este recebe 409) ou
+ * {@code falhou}.
  */
 public final class UploadService {
 
@@ -47,6 +53,13 @@ public final class UploadService {
     private static final char LINE_SEPARATOR = ' ';
     private static final char PARAGRAPH_SEPARATOR = ' ';
     private static final String DELIMITER = "---";
+    private static final String RESULT_ATTEMPT = "tentativa";
+    private static final String RESULT_SAVED = "salvo";
+    private static final String RESULT_EXISTING = "existente";
+    private static final String RESULT_FAILED = "falhou";
+    /** Gravado, mas um ouvinte da mudança (o índice) falhou. */
+    private static final String WARNING_INDEX = "indice";
+
     private static final String MISSING_ID_FIELDS =
             "Sem id no frontmatter: informe os campos fonte e linguagem do envio (e versao para fonte publico)";
 
@@ -112,17 +125,67 @@ public final class UploadService {
         }
         // Auditoria antes de qualquer gravação: se ela falhar, o acervo fica como estava.
         for (Document document : documents) {
-            DocumentId id = document.metadata().id();
-            Map<String, String> details = new LinkedHashMap<>();
-            details.put("document", id.value());
-            details.put("bytes", Integer.toString(utf8Length(document.body())));
-            if (replaced.contains(id)) {
-                details.put("substituido", "true");
-            }
-            audit(AuditEventType.DOCUMENT_UPLOADED, actor, details);
+            auditUpload(actor, document, replaced, RESULT_ATTEMPT);
         }
-        documents.forEach(store::save);
+        boolean conflict = false;
+        for (Document document : documents) {
+            conflict |= !write(actor, document, replaced, request.replace());
+        }
+        if (conflict) {
+            // Outro envio gravou o mesmo id entre a checagem acima e a gravação: o dele fica, este recebe 409.
+            throw new DocumentConflictException();
+        }
         return new UploadResult(documents.stream().map(d -> d.metadata().id()).toList(), replaced);
+    }
+
+    /**
+     * Grava um documento e audita o desfecho ({@code salvo}, {@code existente} ou {@code falhou}). Sem
+     * {@code substituir}, a gravação é {@link DocumentStore#saveIfAbsent}: dois envios simultâneos do mesmo id passam
+     * os dois pela checagem de conflito, e só a gravação atômica decide quem fica. Devolve {@code false} quando o id já
+     * existia.
+     */
+    private boolean write(String actor, Document document, List<DocumentId> replaced, boolean replace) {
+        boolean written;
+        try {
+            if (replace) {
+                store.save(document);
+                written = true;
+            } else {
+                written = store.saveIfAbsent(document);
+            }
+        } catch (Throwable t) { // NOPMD - o desfecho é auditado em qualquer falha, inclusive Error
+            try {
+                if (t instanceof DocumentChangeNotPropagatedException) {
+                    // Gravado; quem falhou foi um ouvinte (o índice). Dizer "falhou" seria mentir sobre o acervo.
+                    auditUpload(actor, document, replaced, RESULT_SAVED, Optional.of(WARNING_INDEX));
+                } else {
+                    auditUpload(actor, document, replaced, RESULT_FAILED, Optional.empty());
+                }
+            } catch (RuntimeException auditFailure) {
+                t.addSuppressed(auditFailure);
+            }
+            throw t;
+        }
+        auditUpload(actor, document, replaced, written ? RESULT_SAVED : RESULT_EXISTING, Optional.empty());
+        return written;
+    }
+
+    private void auditUpload(String actor, Document document, List<DocumentId> replaced, String result) {
+        auditUpload(actor, document, replaced, result, Optional.empty());
+    }
+
+    private void auditUpload(
+            String actor, Document document, List<DocumentId> replaced, String result, Optional<String> warning) {
+        DocumentId id = document.metadata().id();
+        Map<String, String> details = new LinkedHashMap<>();
+        details.put("document", id.value());
+        details.put("bytes", Integer.toString(utf8Length(document.body())));
+        if (replaced.contains(id)) {
+            details.put("substituido", "true");
+        }
+        details.put("resultado", result);
+        warning.ifPresent(w -> details.put("aviso", w));
+        audit(AuditEventType.DOCUMENT_UPLOADED, actor, details);
     }
 
     public List<DocumentMetadata> list() {

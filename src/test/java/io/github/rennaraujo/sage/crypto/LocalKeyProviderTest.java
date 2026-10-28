@@ -3,21 +3,26 @@ package io.github.rennaraujo.sage.crypto;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Base64;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 class LocalKeyProviderTest {
 
     private static final int KEY_BYTES = 32;
 
-    @TempDir
-    Path dir;
+    private final Path dir = ScratchDirs.create("sage-teste-");
+
+    @AfterEach
+    void deleteScratchDir() {
+        ScratchDirs.delete(dir);
+    }
 
     @Test
     void rejectsKeyThatIsNot32Bytes() throws IOException {

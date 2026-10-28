@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
@@ -58,7 +59,9 @@ public final class AnswerGuard {
 
     /** O molde aceito, também sem acento: "a documentacao do <nome> <versao> disponivel nao menciona <assunto>". */
     private static final Pattern ABSENCE_TEMPLATE_SHAPE =
-            Pattern.compile("^a documentacao d[oa] \\S.* disponivel nao menciona (\\S.*)$");
+            Pattern.compile("^a documentacao d[oa] (\\S.*?) disponivel nao menciona (\\S.*)$");
+
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     /** Tamanho máximo do assunto do molde de ausência para ele dispensar o NLI. */
     private static final int MAX_TEMPLATE_SUBJECT = 80;
@@ -81,6 +84,7 @@ public final class AnswerGuard {
 
     private final CitationValidator validator;
     private final List<String> evidence;
+    private final List<String> sources;
     private final GroundednessChecker checker;
     private final SecretScanner scanner;
     private final boolean comparison;
@@ -125,7 +129,29 @@ public final class AnswerGuard {
             boolean flow,
             GroundednessChecker checker,
             SecretScanner scanner) {
+        this(evidence, Collections.nCopies(evidence.size(), ""), comparison, flow, checker, scanner);
+    }
+
+    /**
+     * @param evidence o texto de cada trecho enviado ao modelo, na ordem das citações ({@code [1]} é o índice 0)
+     * @param sources a linguagem e a versão de cada trecho, como o código as escreve ("Java 21"), na mesma ordem; vazio
+     *     para trecho interno ou sem versão. O molde de ausência só passa quando nomeia exatamente a versão de todos os
+     *     trechos que cita.
+     * @param checker decide se os trechos citados sustentam a frase
+     * @param scanner procura credenciais em tudo que vai ser emitido
+     */
+    public AnswerGuard(
+            List<String> evidence,
+            List<String> sources,
+            boolean comparison,
+            boolean flow,
+            GroundednessChecker checker,
+            SecretScanner scanner) {
+        if (sources.size() != evidence.size()) {
+            throw new IllegalArgumentException("sources e evidence precisam ter o mesmo tamanho");
+        }
         this.flow = flow;
+        this.sources = List.copyOf(sources);
         this.evidence = List.copyOf(evidence);
         this.validator = new CitationValidator(evidence.size());
         this.comparison = comparison;
@@ -221,8 +247,15 @@ public final class AnswerGuard {
 
     /** Só os trechos que a frase cita, na ordem em que aparecem, contra a frase sem os marcadores. */
     private boolean grounded(String sentence) {
-        if (comparison && isAbsenceTemplate(sentence)) {
-            return true;
+        if (comparison) {
+            Optional<String> named = absenceTemplateName(sentence);
+            if (named.isPresent() && !namesEveryCitedSource(named.get(), sentence)) {
+                // Ausência dita de uma versão que não é a dos trechos citados: essa versão não foi o que se buscou.
+                return false;
+            }
+            if (named.isPresent() && isAbsenceTemplate(sentence)) {
+                return true;
+            }
         }
         List<String> cites = new ArrayList<>();
         for (int n : new LinkedHashSet<>(CitationValidator.citations(sentence))) {
@@ -256,18 +289,47 @@ public final class AnswerGuard {
         }
     }
 
-    /** O molde de ausência ({@link PromptBuilder#ABSENCE_TEMPLATE}): texto fixo, que o NLI não sustentaria. */
-    static boolean isAbsenceTemplate(String sentence) {
-        String folded = Normalizer.normalize(sentence.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
+    /**
+     * Todos os trechos que a frase cita são da linguagem e versão que o molde nomeia? "A documentação do Java 25
+     * disponível não menciona records [1]" citando um trecho do Java 8 diria algo sobre o Java 25 que ninguém buscou.
+     */
+    private boolean namesEveryCitedSource(String named, String sentence) {
+        List<Integer> cites = CitationValidator.citations(sentence);
+        if (cites.isEmpty()) {
+            return false;
+        }
+        for (int n : cites) {
+            String source = WHITESPACE.matcher(folded(sources.get(n - 1))).replaceAll(" ");
+            if (source.isEmpty() || !source.equals(named)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A linguagem e a versão nomeadas pelo molde de ausência ("java 25"), sem acento e em minúsculas. */
+    private static Optional<String> absenceTemplateName(String sentence) {
+        Matcher template = ABSENCE_TEMPLATE_SHAPE.matcher(CitationValidator.withoutCitations(folded(sentence)));
+        return template.matches()
+                ? Optional.of(WHITESPACE.matcher(template.group(1).strip()).replaceAll(" "))
+                : Optional.empty();
+    }
+
+    private static String folded(String text) {
+        return Normalizer.normalize(text.toLowerCase(Locale.ROOT), Normalizer.Form.NFD)
                 .replaceAll("\\p{M}", "")
                 .strip();
-        Matcher template = ABSENCE_TEMPLATE_SHAPE.matcher(CitationValidator.withoutCitations(folded));
+    }
+
+    /** O molde de ausência ({@link PromptBuilder#ABSENCE_TEMPLATE}): texto fixo, que o NLI não sustentaria. */
+    static boolean isAbsenceTemplate(String sentence) {
+        Matcher template = ABSENCE_TEMPLATE_SHAPE.matcher(CitationValidator.withoutCitations(folded(sentence)));
         if (!template.matches()) {
             return false;
         }
         // Só o assunto curto e de uma oração: "..., mas records são mutáveis" é uma segunda afirmação, que o NLI
         // confere.
-        String subject = template.group(1);
+        String subject = template.group(2);
         return subject.length() <= MAX_TEMPLATE_SUBJECT
                 && !SECOND_CLAUSE.matcher(subject).find();
     }
@@ -320,7 +382,7 @@ public final class AnswerGuard {
         }
         if (template.matches()) {
             // O assunto em si não pode trazer outra afirmação de ausência ("... não menciona isso, mas não existe").
-            return ABSENCE.matcher(template.group(1)).find();
+            return ABSENCE.matcher(template.group(2)).find();
         }
         return ABSENCE.matcher(folded).find();
     }

@@ -28,7 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
  * não depende do buscador respeitar o {@code site:}. A consulta que sai já vem sem alias interno (veja
  * {@link WebQueryBuilder}); a chave vai no cabeçalho e nunca em log. Qualquer falha vira lista vazia.
  */
-public final class BraveWebSearch implements WebSearch {
+public final class BraveWebSearch implements WebSearch, AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(BraveWebSearch.class);
     private static final int RESULT_COUNT = 10;
@@ -54,6 +54,20 @@ public final class BraveWebSearch implements WebSearch {
                 .connectTimeout(properties.fetchTimeout())
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
+    }
+
+    /**
+     * Chamado pelo Spring no desligamento (o bean é {@code AutoCloseable}): fecha o cliente HTTP, que espera as buscas
+     * em curso e libera as threads dele.
+     */
+    @Override
+    public void close() {
+        client.close();
+    }
+
+    /** {@code true} depois que o cliente HTTP terminou (para os testes). */
+    boolean closed() {
+        return client.isTerminated();
     }
 
     @Override

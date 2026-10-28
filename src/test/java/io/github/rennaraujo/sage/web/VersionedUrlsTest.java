@@ -107,6 +107,21 @@ class VersionedUrlsTest {
                 .isTrue();
     }
 
+    @ParameterizedTest
+    @CsvSource({
+        "https://docs.oracle.com/javase/21/%2e%2e/25/x.html, 25",
+        "https://docs.oracle.com/javase/21/%2e%2e/25/x.html, 21",
+        "https://docs.oracle.com/javase/21/%2E%2E/25/x.html, 25",
+        "https://docs.oracle.com/javase/25%2fdocs/x.html, 25",
+        "https://docs.oracle.com/javase/25/docs%2Fx.html, 25",
+        "https://docs.oracle.com/javase/25/%2e/x.html, 25",
+        "https://openjdk.org/projects/jdk/21/%2E%2E/%2e%2e/jeps/444, 21",
+        "https://docs.oracle.com/../javase/25/x.html, 25",
+    })
+    void percentEncodedDotsOrSlashesAndLeftoverDotSegmentsAreRejected(String url, String version) {
+        assertThat(matches(url, "java", version)).isFalse();
+    }
+
     @Test
     void testHostCanBeAliasedToAProductionHost() {
         VersionedUrls aliased = VersionedUrls.production().withAlias("docs.example.test", "docs.oracle.com");

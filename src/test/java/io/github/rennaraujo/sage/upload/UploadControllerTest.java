@@ -16,6 +16,7 @@ import io.github.rennaraujo.sage.auth.RateLimiter;
 import io.github.rennaraujo.sage.document.Document;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentStore;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -28,10 +29,10 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -83,11 +84,15 @@ class UploadControllerTest {
 
             """ + CANARY + "\n";
 
-    @TempDir
-    static Path storageDir;
+    private static final Path STORAGE_DIR = ScratchDirs.create("sage-teste-");
 
-    @TempDir
-    static Path multipartDir;
+    private static final Path MULTIPART_DIR = ScratchDirs.create("sage-teste-");
+
+    @AfterAll
+    static void deleteScratchDirs() {
+        ScratchDirs.delete(STORAGE_DIR);
+        ScratchDirs.delete(MULTIPART_DIR);
+    }
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) throws IOException {
@@ -99,14 +104,14 @@ class UploadControllerTest {
         registry.add("sage.crypto.provider", () -> "local");
         registry.add("sage.crypto.local-key-file", keyFile::toString);
         registry.add("sage.storage.type", () -> "local");
-        registry.add("sage.storage.local-dir", storageDir::toString);
+        registry.add("sage.storage.local-dir", STORAGE_DIR::toString);
         registry.add("sage.auth.keys[0].name", () -> "leitor-teste");
         registry.add("sage.auth.keys[0].role", () -> "READER");
         registry.add("sage.auth.keys[0].sha256", () -> sha256Hex(READER_KEY));
         registry.add("sage.auth.keys[1].name", () -> EDITOR_NAME);
         registry.add("sage.auth.keys[1].role", () -> "EDITOR");
         registry.add("sage.auth.keys[1].sha256", () -> sha256Hex(EDITOR_KEY));
-        registry.add("spring.servlet.multipart.location", multipartDir::toString);
+        registry.add("spring.servlet.multipart.location", MULTIPART_DIR::toString);
         registry.add("sage.rate-limit.uploads-per-minute", () -> UPLOADS_PER_MINUTE);
         registry.add("sage.upload.max-file-bytes", () -> FILE_LIMIT_KB + "KB");
         registry.add("sage.upload.max-zip-bytes", () -> ZIP_LIMIT_KB + "KB");
@@ -309,7 +314,7 @@ class UploadControllerTest {
                 .contains("interno/portal-x/um.md", "interno/portal-x/dois.md", "interno/outro-app/com-id.md");
         assertThat(store.listMetadata()).hasSize(3);
         verify(rateLimiter, times(1)).require(EDITOR_NAME, RateLimitedAction.UPLOAD);
-        verify(auditLog, times(3)).record(any(AuditEvent.class));
+        verify(auditLog, times(6)).record(any(AuditEvent.class));
     }
 
     @Test
@@ -530,11 +535,12 @@ class UploadControllerTest {
         delete("/api/documentos?id=interno/portal-x/faturamento.md");
 
         ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
-        verify(auditLog, times(3)).record(captor.capture());
+        verify(auditLog, times(4)).record(captor.capture());
         List<AuditEvent> events = captor.getAllValues();
         assertThat(events)
                 .extracting(AuditEvent::type)
                 .containsExactly(
+                        AuditEventType.DOCUMENT_UPLOADED,
                         AuditEventType.DOCUMENT_UPLOADED,
                         AuditEventType.DOCUMENT_REVIEWED,
                         AuditEventType.DOCUMENT_DELETED);
@@ -544,6 +550,8 @@ class UploadControllerTest {
                         .containsEntry("document", "interno/portal-x/faturamento.md")
                         .doesNotContainValue(CANARY));
         assertThat(events.getFirst().details().values()).noneMatch(v -> v.contains(CANARY));
+        assertThat(events.get(0).details()).containsEntry("resultado", "tentativa");
+        assertThat(events.get(1).details()).containsEntry("resultado", "salvo");
     }
 
     @Test
@@ -580,13 +588,13 @@ class UploadControllerTest {
     @Test
     void multipartPartsAreNotSpooledToDisk() throws Exception {
         String text = "# Grande\n" + "linha de texto comum para passar do limite antigo\n".repeat(300);
-        try (TempWatcher watcher = new TempWatcher(multipartDir)) {
+        try (TempWatcher watcher = new TempWatcher(MULTIPART_DIR)) {
             ResponseEntity<String> response = upload("grande.md", text, internalFields());
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
             assertThat(watcher.created()).isEmpty();
         }
-        try (java.util.stream.Stream<Path> files = Files.list(multipartDir)) {
+        try (java.util.stream.Stream<Path> files = Files.list(MULTIPART_DIR)) {
             assertThat(files).isEmpty();
         }
     }
@@ -647,7 +655,7 @@ class UploadControllerTest {
                         .body())
                 .contains("NOVO-TEXTO");
         ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
-        verify(auditLog, times(3)).record(captor.capture());
+        verify(auditLog, times(5)).record(captor.capture());
         assertThat(captor.getAllValues().getLast().details()).containsEntry("substituido", "true");
         assertThat(captor.getAllValues().getFirst().details()).doesNotContainKey("substituido");
     }

@@ -34,7 +34,9 @@ Fargate não tem tmpfs. A imagem foi pensada para rodar com o sistema de arquivo
 
 ## Chave KMS
 
-Uma chave simétrica de criptografia (`SYMMETRIC_DEFAULT`) com rotação anual automática ligada. O Sage faz três chamadas a ela: `GenerateDataKey` (AES_256, uma por documento novo), `Decrypt` (uma por leitura de blob) e `DescribeKey` (uma vez, na subida, para falhar cedo se a chave ou a permissão estiverem erradas).
+Uma chave simétrica de criptografia (`SYMMETRIC_DEFAULT`) com rotação anual automática ligada. O Sage faz três chamadas a ela: `GenerateDataKey` (AES_256), `Decrypt` (uma por leitura de blob) e `DescribeKey` (uma vez, na subida, para falhar cedo se a chave ou a permissão estiverem erradas).
+
+O `GenerateDataKey` sai em toda escrita cifrada, não só em documento novo: cada gravação ou substituição de documento (upload, revisão, página trazida pelo fallback web ou pela importação), cada evento de auditoria (toda pergunta gera dois, `QUESTION_ASKED` e `QUESTION_ANSWERED`), cada lacuna registrada. Não há cache de data key: cada blob tem a sua. Na prática, o volume de chamadas ao KMS acompanha o de perguntas, não o de documentos, e uma importação de 200 páginas são umas 600 chamadas em poucos minutos (auditoria de tentativa e de desfecho mais a gravação de cada página). O preço por chamada é baixo, mas vale olhar duas coisas: o custo mensal num uso intenso (perguntas por mês vezes duas, mais os `Decrypt` da subida, que decifra o acervo inteiro) e a cota de requisições por segundo do KMS na região, compartilhada com tudo mais da conta que usa criptografia simétrica. Estourada a cota, o KMS devolve `ThrottlingException`, a gravação da auditoria falha e, como ela é fail-closed, a pergunta falha junto. Se isso aparecer, o caminho é pedir aumento de cota ou introduzir um cache de data key com reuso limitado (por tempo e por número de blobs), ao custo de mais blobs cifrados com a mesma chave.
 
 A política da chave é o que realmente implementa o "só o agente lê". Em vez da declaração padrão que entrega a conta inteira à política do IAM, a política abaixo nomeia quem pode o quê: a role da task usa a chave e não a administra, e uma role de administração a administra e não a usa.
 
@@ -74,8 +76,8 @@ O Sage grava e lê blobs que já chegam cifrados, e pede SSE-KMS em cada escrita
 
 - Block Public Access ligado nas quatro opções, no bucket e na conta.
 - Versionamento ligado. Cada substituição de documento (`substituir=true`) mantém a versão anterior; o preço é que apagar um documento deixa as versões antigas, cifradas, no bucket, e remover de verdade exige uma regra de ciclo de vida para versões não correntes (por exemplo, expirar em 90 dias) ou uma exclusão explícita por versão.
-- Criptografia padrão SSE-KMS com a chave acima e S3 Bucket Key ligado. Sem o Bucket Key, cada PUT e GET vira uma chamada ao KMS, o que soma custo e latência.
-- Uma política que recusa tráfego sem TLS e escrita que peça outro tipo de criptografia que não SSE-KMS. Operadores negados (`StringNotEquals`) casam quando a chave de condição está ausente, então a política nega toda escrita que não traga o cabeçalho `x-amz-server-side-encryption: aws:kms`. É por isso que o `S3BlobStorage` manda `ServerSideEncryption=aws:kms` em cada `PutObject` (com a chave padrão do bucket, a do passo anterior); sem isso a política bloquearia o próprio Sage. Há um teste de integração com LocalStack que confere o cabeçalho no objeto gravado.
+- Criptografia padrão SSE-KMS com a chave acima e S3 Bucket Key ligado. Sem o Bucket Key, cada PUT e GET vira uma chamada ao KMS, além das do envelope do próprio Sage, o que soma custo e latência.
+- Uma política que recusa tráfego sem TLS e escrita que peça outro tipo de criptografia que não SSE-KMS. Operadores negados (`StringNotEquals`) casam quando a chave de condição está ausente, então a política nega toda escrita que não traga o cabeçalho `x-amz-server-side-encryption: aws:kms`. É por isso que o `S3BlobStorage` manda `ServerSideEncryption=aws:kms` em cada `PutObject`; sem isso a política bloquearia o próprio Sage. Recomendo também definir `SAGE_S3_KMS_KEY_ID` com a chave gerenciada pelo cliente (a mesma do passo anterior, ou a segunda chave, se escolher separá-las): aí o `PutObject` leva também `SSEKMSKeyId`, e o objeto fica cifrado por essa chave mesmo que a criptografia padrão do bucket seja trocada ou esteja errada. Sem a variável, quem decide é a criptografia padrão do bucket, e um bucket sem ela configurada cairia na chave gerenciada pela AWS (`aws/s3`), cuja política não é sua. Depois do primeiro upload, confira: `aws s3api head-object --bucket sage-acervo-111122223333 --key docs/<uuid>` deve mostrar `"ServerSideEncryption": "aws:kms"` e `"SSEKMSKeyId"` com o ARN da sua chave (o `aws s3 ls s3://sage-acervo-111122223333/docs/` dá um `<uuid>`). Há um teste de integração com LocalStack que confere o cabeçalho e o id da chave no objeto gravado.
 - Uma regra de ciclo de vida para abortar uploads multipart incompletos e expirar versões não correntes.
 
 ```json
@@ -187,6 +189,7 @@ No task definition, o conjunto mínimo:
     { "name": "SAGE_KMS_KEY_ID", "value": "alias/sage-acervo" },
     { "name": "SAGE_STORAGE_TYPE", "value": "s3" },
     { "name": "SAGE_S3_BUCKET", "value": "sage-acervo-111122223333" },
+    { "name": "SAGE_S3_KMS_KEY_ID", "value": "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000" },
     { "name": "SAGE_MODEL_FAST_ID", "value": "<id-do-modelo-rapido>" },
     { "name": "SAGE_MODEL_STRONG_ID", "value": "<id-do-modelo-forte>" },
     { "name": "AWS_REGION", "value": "us-east-1" },

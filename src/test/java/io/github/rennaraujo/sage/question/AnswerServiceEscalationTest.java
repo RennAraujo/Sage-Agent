@@ -607,6 +607,50 @@ class AnswerServiceEscalationTest {
         assertThat(sink.metadata.get(1).droppedSentences()).isEqualTo(1);
     }
 
+    @Test
+    void singleVersionComparisonSearchesOnlyThatVersion() {
+        stubPerVersion(Map.of("25", List.of(chunk("publico/java/25/records.md", "25", 0.9))));
+        TieredModel model = new TieredModel(
+                Flux.error(new AssertionError("FAST não deveria ser chamado")),
+                Flux.just(
+                        new ModelEvent.TextDelta("A documentação do Java 25 disponível não menciona isso [1]."),
+                        new ModelEvent.Completed()));
+
+        service(model).answer(new AnswerRequest("isso existe no java 25?", Optional.empty(), ACTOR), sink);
+
+        ArgumentCaptor<SearchFilter> filters = ArgumentCaptor.forClass(SearchFilter.class);
+        verify(retriever).retrieve(anyString(), filters.capture(), anyInt());
+        verify(retriever, never()).retrieve(anyString(), any());
+        assertThat(filters.getValue().versions()).containsExactly("25");
+        assertThat(filters.getValue().sources()).containsExactly(Source.PUBLIC);
+        assertThat(sink.events)
+                .containsExactly(
+                        "metadata",
+                        "text:Documentação consultada: Java 25",
+                        "text:A documentação do Java 25 disponível não menciona isso [1].",
+                        "done");
+    }
+
+    @Test
+    void absenceTemplateOnlyPassesForTheVersionOfTheChunksItCites() {
+        stubPerVersion(Map.of(
+                "17", List.of(chunk("publico/java/17/a.md", "17", 0.9)),
+                "21", List.of(chunk("publico/java/21/b.md", "21", 0.9))));
+        TieredModel model = new TieredModel(
+                Flux.error(new AssertionError("FAST não deveria ser chamado")),
+                Flux.just(
+                        new ModelEvent.TextDelta("A documentação do Java 17 disponível não menciona records [1]. "),
+                        new ModelEvent.TextDelta("A documentação do Java 25 disponível não menciona records [2]."),
+                        new ModelEvent.Completed()));
+
+        service(model).answer(new AnswerRequest("diferença entre java 17 e java 21", Optional.empty(), ACTOR), sink);
+
+        assertThat(sink.events)
+                .contains("text:A documentação do Java 17 disponível não menciona records [1].")
+                .doesNotContain("text:A documentação do Java 25 disponível não menciona records [2].");
+        assertThat(sink.metadata.get(1).droppedSentences()).isEqualTo(1);
+    }
+
     private void stubPerVersion(Map<String, List<ScoredChunk>> byVersion) {
         when(retriever.retrieve(anyString(), any(), anyInt())).thenAnswer(call -> {
             SearchFilter filter = call.getArgument(1);

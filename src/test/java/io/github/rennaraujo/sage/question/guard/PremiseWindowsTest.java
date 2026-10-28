@@ -116,4 +116,70 @@ class PremiseWindowsTest {
         assertThat(PremiseWindows.copiedFrom("Use a lista para guardar os itens.", "a lista"))
                 .isFalse();
     }
+
+    @Test
+    void copyThatStartsInsideASentenceAndDropsItsQualifierIsNotACopy() {
+        String premise =
+                "Records" + NL + "Antes do Java 24, records eram um recurso em preview. Records sao classes finais.";
+
+        assertThat(PremiseWindows.copiedFrom(
+                        premise, "Records eram um recurso em preview; records sao classes finais."))
+                .isFalse();
+    }
+
+    @Test
+    void copyOfAListItemUnderAVersionLineIsNotACopy() {
+        String premise = "Até o Java 23:" + NL + "- O recurso X não é suportado em modo nativo.";
+
+        assertThat(PremiseWindows.copiedFrom(premise, "O recurso X não é suportado em modo nativo."))
+                .isFalse();
+    }
+
+    @Test
+    void laterListItemUnderAVersionLineIsNotACopyEither() {
+        String premise = "Notas" + NL + "Desde o Java 21 vale o seguinte" + NL + "- Primeiro item da lista de regras."
+                + NL + "- O recurso X não é suportado em modo nativo.";
+
+        assertThat(PremiseWindows.copiedFrom(premise, "O recurso X não é suportado em modo nativo."))
+                .isFalse();
+    }
+
+    @Test
+    void ninetyPercentOfASentenceThatDropsAQualifierIsNotACopy() {
+        String premise = "Records. A partir do Java 16 o recurso records e estavel e pode ser usado em producao.";
+
+        assertThat(PremiseWindows.copiedFrom(premise, "o recurso records e estavel e pode ser usado em producao."))
+                .isFalse();
+    }
+
+    @Test
+    void copyUnderASubjectLineThatNamesAVersionIsNotACopy() {
+        String probe = "Java 17 e anteriores" + NL + "O coletor padrao e o Parallel GC nessa linha.";
+        String breadcrumb = "GC > Java 17 e anteriores" + NL + "O coletor padrao e o Parallel GC nessa linha.";
+
+        assertThat(PremiseWindows.copiedFrom(probe, "O coletor padrao e o Parallel GC nessa linha."))
+                .isFalse();
+        assertThat(PremiseWindows.copiedFrom(breadcrumb, "O coletor padrao e o Parallel GC nessa linha."))
+                .isFalse();
+    }
+
+    @Test
+    void wholeSentenceAfterAPlainSentenceIsStillACopy() {
+        String premise =
+                "Records" + NL + "Antes do Java 24, records eram um recurso em preview. Records sao classes finais.";
+
+        assertThat(PremiseWindows.copiedFrom(premise, "Records sao classes finais."))
+                .isTrue();
+        assertThat(PremiseWindows.copiedFrom(premise, "Antes do Java 24, records eram um recurso em preview."))
+                .isTrue();
+    }
+
+    @Test
+    void listItemUnderAPlainLineIsStillACopy() {
+        String premise = "Coleções" + NL + "Os métodos principais são estes." + NL
+                + "- O método toList devolve uma lista imutável.";
+
+        assertThat(PremiseWindows.copiedFrom(premise, "O método toList devolve uma lista imutável."))
+                .isTrue();
+    }
 }

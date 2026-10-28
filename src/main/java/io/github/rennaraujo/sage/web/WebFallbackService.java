@@ -7,6 +7,7 @@ import io.github.rennaraujo.sage.audit.AuditEventType;
 import io.github.rennaraujo.sage.audit.AuditException;
 import io.github.rennaraujo.sage.audit.AuditLog;
 import io.github.rennaraujo.sage.document.Document;
+import io.github.rennaraujo.sage.document.DocumentChangeNotPropagatedException;
 import io.github.rennaraujo.sage.document.DocumentId;
 import io.github.rennaraujo.sage.document.DocumentMetadata;
 import io.github.rennaraujo.sage.document.DocumentStore;
@@ -49,7 +50,8 @@ import org.slf4j.LoggerFactory;
  * {@code url_origem} e {@code coletado_em}. O resto do pipeline (índice, cache, citações marcadas como não revisadas)
  * trata esses documentos como quaisquer outros.
  *
- * <p>Antes de qualquer saída para a internet o serviço grava {@code WEB_SEARCH} na auditoria (ator, linguagem, versão e
+ * <p>A consulta montada passa pelo {@link SecretScanner}: se carregaria algo com cara de credencial, não há busca.
+ * Antes de qualquer saída para a internet o serviço grava {@code WEB_SEARCH} na auditoria (ator, linguagem, versão e
  * o SHA-256 da consulta, nunca o texto); se a gravação falha, a exceção sobe e nada sai (fail-closed). Cada página
  * passa por: URL cuja estrutura de caminho traz a versão pedida ({@link VersionedUrls}; sem isso, uma página de outra
  * versão seria gravada com o rótulo errado), download pelo {@link AllowlistedPageFetcher}, conversão pelo
@@ -181,6 +183,13 @@ public final class WebFallbackService implements WebFallback, AutoCloseable {
                 || budget.isZero()) {
             return List.of();
         }
+        // A pergunta crua também passa pelo scanner, antes de qualquer auditoria ou saída: a consulta é remontada por
+        // um tokenizer que corta em "=", ":" e "-", e "senha=abc...", "xoxb-..." ou um JWT com hífen sairiam dele em
+        // pedaços que o scanner não reconhece mais.
+        if (!scanner.scan(question).isEmpty()) {
+            LOG.warn("Fallback web não executado: a pergunta carrega um possível segredo");
+            return List.of();
+        }
         long deadline = System.nanoTime() + budget.toNanos();
         String triedKey = triedKey(language.get(), version, question);
         if (tried.getIfPresent(triedKey) != null) {
@@ -239,6 +248,12 @@ public final class WebFallbackService implements WebFallback, AutoCloseable {
         Optional<String> query = queryBuilder.build(question, forVersion);
         if (query.isEmpty()) {
             LOG.info("Fallback web não executado: a consulta carregaria um alias interno");
+            return List.of();
+        }
+        // A consulta sai para o Brave: credencial colada na pergunta não pode ir junto. Achou, não busca (fail-closed),
+        // e o log não diz o quê.
+        if (!scanner.scan(query.get()).isEmpty()) {
+            LOG.warn("Fallback web não executado: a consulta carregaria um possível segredo");
             return List.of();
         }
         // Fail-closed: sem registro da saída, ela não acontece. O texto da consulta nunca vai para a auditoria.
@@ -308,6 +323,10 @@ public final class WebFallbackService implements WebFallback, AutoCloseable {
         boolean written;
         try {
             written = this.store.saveIfAbsent(doc);
+        } catch (DocumentChangeNotPropagatedException e) {
+            // Gravado; quem falhou foi um ouvinte (o índice). O desfecho não pode dizer "falhou".
+            recordUpload(actor, doc, "salvo", Optional.of("indice"));
+            throw e;
         } catch (RuntimeException e) {
             recordUpload(actor, doc, "falhou");
             throw e;
@@ -319,11 +338,16 @@ public final class WebFallbackService implements WebFallback, AutoCloseable {
     }
 
     private void recordUpload(String actor, Document doc, String result) {
-        audit.record(new AuditEvent(
-                AuditEventType.DOCUMENT_UPLOADED,
-                actor,
-                clock.instant(),
-                Map.of("document", doc.metadata().id().value(), "origem", "web", "resultado", result)));
+        recordUpload(actor, doc, result, Optional.empty());
+    }
+
+    private void recordUpload(String actor, Document doc, String result, Optional<String> warning) {
+        Map<String, String> details = new java.util.LinkedHashMap<>();
+        details.put("document", doc.metadata().id().value());
+        details.put("origem", "web");
+        details.put("resultado", result);
+        warning.ifPresent(w -> details.put("aviso", w));
+        audit.record(new AuditEvent(AuditEventType.DOCUMENT_UPLOADED, actor, clock.instant(), details));
     }
 
     private Optional<Document> toDocument(FetchedPage page, String language, String version) {

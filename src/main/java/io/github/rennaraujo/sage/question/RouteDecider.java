@@ -79,14 +79,16 @@ public final class RouteDecider {
     }
 
     /**
-     * Comparação entre duas ou mais versões de uma linguagem pública: cada versão é buscada separadamente, para uma
-     * não tomar o contexto da outra. Numa pergunta mista a documentação interna vira mais um grupo, com busca própria.
+     * Comparação que nomeia ao menos uma versão de uma linguagem pública: cada versão é buscada separadamente, para uma
+     * não tomar o contexto da outra. Com uma versão só ("isso existe no java 25?") a busca fica dentro dela, porque a
+     * resposta pode dizer que a documentação daquela versão não menciona o assunto, e isso só vale para versão
+     * buscada. Numa pergunta mista a documentação interna vira mais um grupo, com busca própria.
      */
     static boolean perVersion(QuestionAnalysis analysis) {
         return analysis.type() == QuestionType.COMPARISON
                 && analysis.sources().contains(Source.PUBLIC)
                 && analysis.language().isPresent()
-                && analysis.versions().size() >= 2;
+                && !analysis.versions().isEmpty();
     }
 
     /** Trechos com score no limiar ativo ou acima; numa comparação por versão, o que sobra é o que o grupo tem. */

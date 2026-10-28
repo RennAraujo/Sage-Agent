@@ -114,7 +114,7 @@ class EncryptedDocumentStoreTest {
         assertThat(store.saveIfAbsent(other)).isFalse();
 
         assertThat(store.find(first.metadata().id())).hasValue(first);
-        assertThat(events).hasSize(1);
+        assertThat(events).containsExactly(new DocumentSavedEvent(first), new DocumentsChangedEvent());
         assertThat(blobs.list("docs/")).hasSize(1);
     }
 
@@ -132,7 +132,7 @@ class EncryptedDocumentStoreTest {
                 wins += result.get() ? 1 : 0;
             }
             assertThat(wins).isEqualTo(1);
-            assertThat(events).hasSize(1);
+            assertThat(events).containsExactly(new DocumentSavedEvent(doc), new DocumentsChangedEvent());
             assertThat(blobs.list("docs/")).hasSize(1);
         } finally {
             pool.shutdownNow();
@@ -238,7 +238,29 @@ class EncryptedDocumentStoreTest {
         assertThat(events)
                 .containsExactly(
                         new DocumentSavedEvent(doc),
-                        new DocumentDeletedEvent(doc.metadata().id()));
+                        new DocumentsChangedEvent(),
+                        new DocumentDeletedEvent(doc.metadata().id()),
+                        new DocumentsChangedEvent());
+    }
+
+    @Test
+    void changedEventIsPublishedEvenWhenAListenerOfTheChangeThrows() {
+        List<Object> seen = new CopyOnWriteArrayList<>();
+        EncryptedDocumentStore failing = new EncryptedDocumentStore(cipher, blobs, new FrontmatterParser(), event -> {
+            seen.add(event);
+            if (event instanceof DocumentDeletedEvent) {
+                throw new IllegalStateException("ouvinte quebrado");
+            }
+        });
+        Document doc = publicDoc();
+        failing.save(doc);
+
+        assertThatThrownBy(() -> failing.delete(doc.metadata().id()))
+                .isInstanceOf(DocumentChangeNotPropagatedException.class)
+                .hasCauseInstanceOf(IllegalStateException.class);
+
+        assertThat(seen).last().isEqualTo(new DocumentsChangedEvent());
+        assertThat(failing.find(doc.metadata().id())).isEmpty();
     }
 
     @Test
@@ -282,7 +304,11 @@ class EncryptedDocumentStoreTest {
             }
         }
 
-        Object last = events.getLast();
+        Object last = events.stream()
+                .filter(e -> !(e instanceof DocumentsChangedEvent))
+                .reduce((a, b) -> b)
+                .orElseThrow();
+        assertThat(events.getLast()).isEqualTo(new DocumentsChangedEvent());
         assertThat(last instanceof DocumentSavedEvent).isEqualTo(store.find(id).isPresent());
         assertThat(blobs.list("docs/")).hasSize(store.listMetadata().size());
     }

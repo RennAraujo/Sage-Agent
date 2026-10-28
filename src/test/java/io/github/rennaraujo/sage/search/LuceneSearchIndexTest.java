@@ -12,6 +12,7 @@ import io.github.rennaraujo.sage.document.FrontmatterParser;
 import io.github.rennaraujo.sage.document.Source;
 import io.github.rennaraujo.sage.search.embedding.EmbeddingModel;
 import io.github.rennaraujo.sage.storage.LocalBlobStorage;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
@@ -31,7 +32,6 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 class LuceneSearchIndexTest {
 
@@ -391,7 +391,16 @@ class LuceneSearchIndexTest {
     }
 
     @Test
-    void writesNothingToDisk(@TempDir Path data) throws IOException {
+    void writesNothingToDisk() throws IOException {
+        Path data = ScratchDirs.create("sage-teste-");
+        try {
+            writesNothingToDisk(data);
+        } finally {
+            ScratchDirs.delete(data);
+        }
+    }
+
+    private void writesNothingToDisk(Path data) throws IOException {
         byte[] master = new byte[MASTER_KEY_BYTES];
         new SecureRandom().nextBytes(master);
         EncryptedDocumentStore store = new EncryptedDocumentStore(

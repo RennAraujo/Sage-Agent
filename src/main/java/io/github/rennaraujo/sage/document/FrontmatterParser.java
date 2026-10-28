@@ -168,7 +168,7 @@ public final class FrontmatterParser {
         Optional<String> version = text(fields, VERSION).or(() -> d.version());
         Optional<URI> originUrl = text(fields, ORIGIN_URL).map(FrontmatterParser::toHttpUri);
         if (source == Source.PUBLIC) {
-            version.orElseThrow(() -> missing(VERSION));
+            requireIdMatches(id, language, version.orElseThrow(() -> missing(VERSION)));
             originUrl.orElseThrow(() -> missing(ORIGIN_URL));
         }
         LocalDate collectedAt =
@@ -177,6 +177,21 @@ public final class FrontmatterParser {
                 text(fields, REVIEWED).map(FrontmatterParser::toBoolean).orElse(d.reviewed());
         return new DocumentMetadata(
                 id, source, language, version, section, aliases(fields), originUrl, collectedAt, reviewed);
+    }
+
+    /**
+     * Num documento público, o caminho do id ({@code publico/<linguagem>/<versao>/...}) e os campos precisam dizer a
+     * mesma linguagem e versão (sem diferenciar caixa). A busca filtra pelos campos e a citação mostra o id: se
+     * divergissem, a resposta citaria um documento do Java 21 como se fosse do 25. A mensagem nomeia só o campo.
+     */
+    private static void requireIdMatches(DocumentId id, String language, String version) {
+        String[] segments = id.value().split("/", -1);
+        if (!segments[1].equalsIgnoreCase(language.strip())) {
+            throw new InvalidDocumentException("Campo " + LANGUAGE + " contradiz o id");
+        }
+        if (!segments[2].equalsIgnoreCase(version.strip())) {
+            throw new InvalidDocumentException("Campo " + VERSION + " contradiz o id");
+        }
     }
 
     private static DocumentId resolveId(Map<String, Object> fields, Optional<DocumentId> givenId) {

@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 
 /**
- * Entradas que quebram tokenizers (herdado da Task 9): pergunta vazia, só caracteres de controle ou de largura zero,
+ * Entradas que quebram tokenizers: pergunta vazia, só caracteres de controle ou de largura zero,
  * trecho vazio e 3000 caracteres sem espaço. Nenhuma pode lançar exceção nem derrubar a JVM (o tokenizer é código
  * nativo em Rust: um pânico lá derrubaria o processo, não só a requisição). Segurança contra negação de serviço, por
  * isso roda no {@code verify} padrão quando os modelos estão no disco.

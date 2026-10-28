@@ -8,6 +8,7 @@ import io.github.rennaraujo.sage.crypto.EnvelopeCipher;
 import io.github.rennaraujo.sage.crypto.LocalKeyProvider;
 import io.github.rennaraujo.sage.storage.BlobStorage;
 import io.github.rennaraujo.sage.storage.LocalBlobStorage;
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.SecureRandom;
@@ -16,10 +17,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 
@@ -31,8 +32,12 @@ class EncryptedAuditLogTest {
     private static final String CANARY = "CANARIO-DE-CONTEUDO-777";
     private static final Instant AT = Instant.parse("2026-10-27T23:59:30Z");
 
-    @TempDir
-    Path dir;
+    private final Path dir = ScratchDirs.create("sage-teste-");
+
+    @AfterEach
+    void deleteScratchDir() {
+        ScratchDirs.delete(dir);
+    }
 
     private EnvelopeCipher cipher;
     private BlobStorage blobs;

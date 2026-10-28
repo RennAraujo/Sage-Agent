@@ -65,10 +65,25 @@ public final class EncryptedDocumentStore implements DocumentStore {
             String blobKey = existing != null ? existing.blobKey() : BLOB_PREFIX + UUID.randomUUID();
             blobs.put(blobKey, encrypted);
             catalog.put(id, new Entry(blobKey, doc.metadata()));
-            // Dentro do lock: a ordem dos eventos de um id é a ordem das operações no armazém.
-            events.publishEvent(new DocumentSavedEvent(doc));
             LOG.info("Documento salvo: {}", id.logRef());
+            // Dentro do lock: a ordem dos eventos de um id é a ordem das operações no armazém.
+            publish(new DocumentSavedEvent(doc));
             return true;
+        }
+    }
+
+    /**
+     * Publica o evento da mudança e, num {@code finally}, o {@link DocumentsChangedEvent}: se um ouvinte (o índice)
+     * lançar exceção, a exceção sobe para quem gravou, mas o cache de respostas ainda é esvaziado.
+     */
+    private void publish(Object event) {
+        try {
+            events.publishEvent(event);
+        } catch (RuntimeException e) {
+            // A mudança já está no acervo: quem gravou precisa saber que não foi a gravação que falhou.
+            throw new DocumentChangeNotPropagatedException(e);
+        } finally {
+            events.publishEvent(new DocumentsChangedEvent());
         }
     }
 
@@ -93,8 +108,8 @@ public final class EncryptedDocumentStore implements DocumentStore {
             if (entry != null) {
                 blobs.delete(entry.blobKey());
                 catalog.remove(id);
-                events.publishEvent(new DocumentDeletedEvent(id));
                 LOG.info("Documento apagado: {}", id.logRef());
+                publish(new DocumentDeletedEvent(id));
             }
         }
     }

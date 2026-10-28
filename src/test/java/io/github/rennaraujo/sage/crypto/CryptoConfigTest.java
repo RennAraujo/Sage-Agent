@@ -2,9 +2,10 @@ package io.github.rennaraujo.sage.crypto;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.github.rennaraujo.sage.testsupport.ScratchDirs;
 import java.nio.file.Path;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -13,8 +14,12 @@ import org.springframework.context.annotation.Import;
 
 class CryptoConfigTest {
 
-    @TempDir
-    Path dir;
+    private final Path dir = ScratchDirs.create("sage-teste-");
+
+    @AfterEach
+    void deleteScratchDir() {
+        ScratchDirs.delete(dir);
+    }
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(ValidationAutoConfiguration.class))

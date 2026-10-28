@@ -3,25 +3,23 @@ package io.github.rennaraujo.sage.question;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Ticker;
-import io.github.rennaraujo.sage.document.DocumentDeletedEvent;
-import io.github.rennaraujo.sage.document.DocumentSavedEvent;
+import io.github.rennaraujo.sage.document.DocumentsChangedEvent;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.regex.Pattern;
 import org.springframework.context.event.EventListener;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
 
 /**
  * Cache de respostas completas, em memória (Caffeine), com validade e tamanho máximo. Nunca é serializado nem gravado
- * em disco: guarda texto derivado de documentos. Qualquer documento salvo ou apagado esvazia o cache inteiro; os
- * ouvintes rodam dentro do lock do armazém de documentos, então só fazem {@code invalidateAll}.
+ * em disco: guarda texto derivado de documentos. Qualquer documento salvo ou apagado esvazia o cache inteiro; o
+ * ouvinte roda dentro do lock do armazém de documentos, então só faz {@code invalidateAll}.
  *
- * <p>Ordem dos ouvintes: {@code @EventListener} sem {@code @Order} já vale {@code LOWEST_PRECEDENCE}, então só o
- * {@code @Order(0)} explícito de {@code IndexBootstrapper} e {@code AliasCatalog} faz o cache (que fica em
- * {@code LOWEST_PRECEDENCE}) rodar depois deles; sem isso o empate cai na ordem de registro dos beans. Só então a
- * época avança e o cache esvazia. Assim uma resposta que lê o índice já atualizado não é apagada à toa, e uma que
- * leu o índice antigo tem a época velha e não entra.
+ * <p>O cache não ouve {@code DocumentSavedEvent} nem {@code DocumentDeletedEvent}, e sim o
+ * {@link DocumentsChangedEvent}, que o armazém publica num {@code finally} depois deles. Duas garantias saem disso:
+ * o cache esvazia depois de o índice e o catálogo de aliases atualizarem (uma resposta que leu o índice antigo tem a
+ * época velha e não entra; uma que leu o novo não é apagada à toa), e esvazia mesmo quando um desses ouvintes lança
+ * exceção. Antes, com o cache como último ouvinte do mesmo evento, uma falha no índice impedia a limpeza e a resposta
+ * velha continuava sendo servida até a validade.
  *
  * <p>{@link #epoch()} existe para uma resposta que começou antes de um documento mudar não entrar no cache depois da
  * limpeza: quem vai guardar lê a época antes de buscar e a passa na hora do {@code put}.
@@ -80,15 +78,9 @@ public final class AnswerCache {
         entries.invalidateAll();
     }
 
+    /** O acervo mudou: chega depois de todos os ouvintes do salvamento ou da remoção, mesmo que algum tenha falhado. */
     @EventListener
-    @Order(Ordered.LOWEST_PRECEDENCE)
-    public void onSaved(DocumentSavedEvent event) {
-        clear();
-    }
-
-    @EventListener
-    @Order(Ordered.LOWEST_PRECEDENCE)
-    public void onDeleted(DocumentDeletedEvent event) {
+    public void onChanged(DocumentsChangedEvent event) {
         clear();
     }
 

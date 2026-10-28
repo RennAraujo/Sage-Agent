@@ -83,6 +83,8 @@ public final class AnswerService {
     static final String NO_OFFICIAL_SOURCES = "Não há fontes oficiais configuradas para essa linguagem.";
     static final String NO_VERSION = "(versão não informada)";
     static final String ONLY_COMPARED = "Comparei só as versões %s; peça as demais em outra pergunta.";
+    static final String SEARCHED = "Busquei na documentação do %s.";
+    static final String SEARCHED_ALL_VERSIONS = "Busquei na documentação do %s, em todas as versões do acervo.";
 
     /** Piso de trechos por grupo numa comparação; também limita quantos grupos cabem no teto. */
     static final int MIN_CHUNKS_PER_GROUP = 2;
@@ -374,10 +376,8 @@ public final class AnswerService {
         List<String> perVersion = RouteDecider.perVersion(analysis)
                 ? analysis.versions().stream().filter(v -> !missing.contains(v)).toList()
                 : List.of();
-        if (comparison && versions.size() < 2) {
-            // Comparação com uma versão só ("isso existe no java 25?"): a resposta pode estar em qualquer versão.
-            versions = List.of();
-        }
+        // Comparação com uma versão só ("isso existe no java 25?") também é busca por versão, um grupo só: a ausência
+        // só pode ser dita de uma versão que foi de fato buscada.
         boolean singlePublicVersion =
                 sources.contains(Source.PUBLIC) && analysis.language().isPresent() && versions.size() == 1;
         return new Plan(
@@ -410,9 +410,8 @@ public final class AnswerService {
         }
         boolean internal = plan.analysis().sources().contains(Source.INTERNAL);
         int budget = retriever.comparisonMaxChunks();
-        int maxPublic = Math.max(1, budget / MIN_CHUNKS_PER_GROUP - (internal ? 1 : 0));
         List<String> requested = plan.perVersion();
-        List<String> searched = requested.subList(0, Math.min(maxPublic, requested.size()));
+        List<String> searched = searchedVersions(plan);
         List<String> skipped = requested.subList(searched.size(), requested.size());
         List<VersionContext> slots = new ArrayList<>();
         List<SearchFilter> filters = new ArrayList<>();
@@ -459,6 +458,39 @@ public final class AnswerService {
                 : Optional.of(ONLY_COMPARED.formatted(joined(
                         searched.stream().map(v -> languageName(plan) + " " + v).toList())));
         return new Retrieval(List.copyOf(all), List.copyOf(groups), notice);
+    }
+
+    /**
+     * Versões que a busca de fato cobre: numa comparação, as pedidas que existem, até o teto de grupos; senão, as do
+     * filtro (vazio quando a busca pega todas as versões).
+     */
+    private List<String> searchedVersions(Plan plan) {
+        if (!plan.byVersion()) {
+            return plan.filter().versions();
+        }
+        boolean internal = plan.analysis().sources().contains(Source.INTERNAL);
+        int maxPublic = Math.max(1, retriever.comparisonMaxChunks() / MIN_CHUNKS_PER_GROUP - (internal ? 1 : 0));
+        List<String> requested = plan.perVersion();
+        return requested.subList(0, Math.min(maxPublic, requested.size()));
+    }
+
+    /**
+     * Numa pergunta só pública, a linha que diz em que versão se buscou, emitida antes de "não encontrei" e de "não
+     * cobre": sem ela, o usuário não saberia se a resposta vale para a versão que ele tinha em mente.
+     */
+    private Optional<String> searchedLine(Plan plan) {
+        if (!RouteDecider.publicOnly(plan.analysis())
+                || plan.analysis().language().isEmpty()
+                || plan.skipSearch()) {
+            return Optional.empty();
+        }
+        String name = languageName(plan);
+        List<String> versions = searchedVersions(plan);
+        return Optional.of(
+                versions.isEmpty()
+                        ? SEARCHED_ALL_VERSIONS.formatted(name)
+                        : SEARCHED.formatted(joined(
+                                versions.stream().map(v -> name + " " + v).toList())));
     }
 
     /**
@@ -635,6 +667,7 @@ public final class AnswerService {
         } else {
             if (!plan.skipSearch()) {
                 plan.inferred().ifPresent(v -> sink.text(INFERRED_VERSION.formatted(v)));
+                searchedLine(plan).ifPresent(sink::text);
                 sink.text(flowOnInternal(plan) ? PromptBuilder.FLOW_NOT_DETAILED : NO_CONTEXT);
             }
         }
@@ -676,7 +709,7 @@ public final class AnswerService {
                 timer.timings(),
                 List.of());
         Opening opening = new Opening(sink, metadata, prelude(plan, found));
-        Emitter emitter = new Emitter(sink, opening, chunks, found.groups(), languageName(plan));
+        Emitter emitter = new Emitter(sink, opening, chunks, found.groups(), languageName(plan), searchedLine(plan));
         try {
             if (tier == ModelTier.STRONG) {
                 opening.send();
@@ -748,7 +781,7 @@ public final class AnswerService {
         }
 
         boolean run(ModelTier tier, Prompt prompt) {
-            AnswerGuard guard = guards.create(evidence(chunks), comparison, flow);
+            AnswerGuard guard = guards.create(evidence(chunks), versionLabels(chunks), comparison, flow);
             progress.start(guard, citations);
             if (progress.clientGone()) {
                 throw new AnswerAbortedException(AnswerAbortedException.Reason.CLIENT_GONE);
@@ -830,6 +863,19 @@ public final class AnswerService {
     private static List<String> evidence(List<ScoredChunk> chunks) {
         return chunks.stream()
                 .map(c -> c.chunk().headingPath() + "\n" + c.chunk().text())
+                .toList();
+    }
+
+    /**
+     * A linguagem e a versão de cada trecho, como a linha "Documentação consultada" as escreve ("Java 21"); vazio para
+     * trecho interno ou público sem versão. O guard só aceita o molde de ausência que nomeia exatamente isso.
+     */
+    private List<String> versionLabels(List<ScoredChunk> chunks) {
+        return chunks.stream()
+                .map(ScoredChunk::chunk)
+                .map(c -> c.source() == Source.PUBLIC && c.version().isPresent()
+                        ? catalog.displayName(c.language()) + " " + c.version().get()
+                        : "")
                 .toList();
     }
 
@@ -933,6 +979,9 @@ public final class AnswerService {
         private final List<Pending> pending = new ArrayList<>();
         private final Set<String> announced = new HashSet<>();
         private final List<ConsultedSource> consulted = new ArrayList<>();
+        /** "Busquei na documentação do Java 21.", dito antes do "não cobre" numa pergunta só pública. */
+        private final Optional<String> searched;
+
         private boolean started;
 
         private record Pending(int group, String line) {}
@@ -942,7 +991,9 @@ public final class AnswerService {
                 Opening opening,
                 List<ScoredChunk> chunks,
                 List<VersionContext> groups,
-                String languageName) {
+                String languageName,
+                Optional<String> searched) {
+            this.searched = searched;
             this.sink = sink;
             this.opening = opening;
             this.chunks = chunks;
@@ -967,6 +1018,9 @@ public final class AnswerService {
         void accepted(String text) {
             started = true;
             opening.send();
+            if (PromptBuilder.NOT_COVERED.equals(text)) {
+                searched.ifPresent(sink::text);
+            }
             for (int n : AnswerGuard.citationsIn(text)) {
                 if (n >= 1 && n <= chunks.size()) {
                     flushPendingBefore(groupOfChunk[n - 1]);
